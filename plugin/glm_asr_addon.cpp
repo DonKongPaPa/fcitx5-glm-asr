@@ -89,7 +89,7 @@ bool GlmAsrAddon::sendConfigToDaemon() {
         "\"api_key\":\"" + escapeJson(config_.apiKey.value()) + "\","
         "\"model\":\"" + escapeJson(config_.model.value()) + "\","
         "\"api_url\":\"" + escapeJson(config_.apiUrl.value()) + "\","
-        "\"sample_rate\":" + std::to_string(config_.sampleRate.value()) +
+        "\"sample_rate\":" + SampleRateToString(config_.sampleRate.value()) +
     "}\n";
 
     ssize_t w = write(fd, cmd.c_str(), cmd.size());

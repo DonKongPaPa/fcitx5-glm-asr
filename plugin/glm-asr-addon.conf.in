@@ -1,5 +1,5 @@
 [Addon]
-Name=glm-asr
+Name=GLM ASR
 Category=Module
 Version=@PROJECT_VERSION@
 Library=glm-asr

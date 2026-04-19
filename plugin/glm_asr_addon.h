@@ -2,9 +2,11 @@
 
 #include <fcitx/addoninstance.h>
 #include <fcitx-config/configuration.h>
+#include <fcitx-config/enum.h>
 #include <fcitx-config/option.h>
 #include <fcitx-config/iniparser.h>
 #include <fcitx-config/rawconfig.h>
+#include <fcitx-utils/i18n.h>
 #include <fcitx-utils/handlertable.h>
 #include <fcitx-utils/eventloopinterface.h>
 #include <fcitx/instance.h>
@@ -15,6 +17,9 @@
 #include <memory>
 #include <string>
 #include <vector>
+
+enum class SampleRate { R8000, R16000, R44100, R48000 };
+FCITX_CONFIG_ENUM_NAME_WITH_I18N(SampleRate, N_("8000"), N_("16000"), N_("44100"), N_("48000"))
 
 FCITX_CONFIGURATION(
     GlmAsrConfig,
@@ -33,11 +38,11 @@ FCITX_CONFIGURATION(
         "ApiUrl",
         "API URL",
         std::string("https://open.bigmodel.cn/api/paas/v4/audio/transcriptions")};
-    fcitx::Option<int> sampleRate{
+    fcitx::OptionWithAnnotation<SampleRate, SampleRateI18NAnnotation> sampleRate{
         this,
         "SampleRate",
         "Sample Rate (Hz)",
-        16000};
+        SampleRate::R16000};
 );
 
 class GlmAsrAddon : public fcitx::AddonInstance {
