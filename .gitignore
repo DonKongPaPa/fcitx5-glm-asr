@@ -1,0 +1,11 @@
+build/
+daemon/target/
+*.so
+*.o
+*.a
+.cache/
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store

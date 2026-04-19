@@ -1,0 +1,14 @@
+[Unit]
+Description=GLM ASR Daemon for Voice Typing
+After=pipewire.service pipewire-pulse.service
+Requires=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/glm-asrd
+Restart=on-failure
+RestartSec=3
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target
