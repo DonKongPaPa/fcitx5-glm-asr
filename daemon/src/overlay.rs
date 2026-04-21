@@ -61,6 +61,7 @@ struct OverlayState {
     height: u32,
     need_redraw: bool,
     visible: bool,
+    configured: bool,
     exit: bool,
     alive: Arc<AtomicBool>,
     cmd_rx: std::sync::mpsc::Receiver<OverlayCommand>,
@@ -175,8 +176,11 @@ impl LayerShellHandler for OverlayState {
     ) {
         self.width = NonZeroU32::new(configure.new_size.0).map_or(400, NonZeroU32::get);
         self.height = NonZeroU32::new(configure.new_size.1).map_or(48, NonZeroU32::get);
+        self.configured = true;
         self.need_redraw = true;
-        self.draw(qh);
+        if self.visible {
+            self.draw(qh);
+        }
     }
 }
 
@@ -188,7 +192,7 @@ delegate_registry!(OverlayState);
 
 impl OverlayState {
     fn draw(&mut self, qh: &QueueHandle<Self>) {
-        if !self.visible || self.width == 0 || self.height == 0 {
+        if !self.configured || self.width == 0 || self.height == 0 {
             return;
         }
 
@@ -209,13 +213,22 @@ impl OverlayState {
             }
         };
 
-        let bg: u32 = 0xD9_1A_1A_2E;
-        for chunk in canvas.chunks_exact_mut(4) {
-            let bytes = bg.to_le_bytes();
-            chunk[0] = bytes[0];
-            chunk[1] = bytes[1];
-            chunk[2] = bytes[2];
-            chunk[3] = bytes[3];
+        if self.visible {
+            let bg: u32 = 0xD9_1A_1A_2E;
+            for chunk in canvas.chunks_exact_mut(4) {
+                let bytes = bg.to_le_bytes();
+                chunk[0] = bytes[0];
+                chunk[1] = bytes[1];
+                chunk[2] = bytes[2];
+                chunk[3] = bytes[3];
+            }
+        } else {
+            for chunk in canvas.chunks_exact_mut(4) {
+                chunk[0] = 0;
+                chunk[1] = 0;
+                chunk[2] = 0;
+                chunk[3] = 0;
+            }
         }
 
         self.layer.wl_surface().damage_buffer(0, 0, width as i32, height as i32);
@@ -231,20 +244,16 @@ impl OverlayState {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd {
                 OverlayCommand::Show => {
-                    if !self.visible {
-                        self.visible = true;
-                        self.need_redraw = true;
-                        info!("overlay: received Show command, drawing...");
-                        self.draw(qh);
-                    }
+                    self.visible = true;
+                    self.need_redraw = true;
+                    self.draw(qh);
+                    info!("overlay: received Show command");
                 }
                 OverlayCommand::Hide => {
-                    if self.visible {
-                        self.visible = false;
-                        self.layer.wl_surface().attach(None::<&WlBuffer>, 0, 0);
-                        self.layer.commit();
-                        info!("overlay: received Hide command");
-                    }
+                    self.visible = false;
+                    self.need_redraw = true;
+                    self.draw(qh);
+                    info!("overlay: received Hide command");
                 }
                 OverlayCommand::SetText(_) => {
                     self.need_redraw = true;
@@ -323,6 +332,7 @@ fn run_overlay(
         height: 48,
         need_redraw: false,
         visible: false,
+        configured: false,
         exit: false,
         alive,
         cmd_rx,
@@ -331,16 +341,36 @@ fn run_overlay(
 
     info!("overlay: wayland layer-shell initialized");
 
+    use std::os::unix::io::{AsFd, AsRawFd};
+
     loop {
-        event_queue.blocking_dispatch(&mut state)?;
+        if let Some(guard) = event_queue.prepare_read() {
+            let _ = guard.read();
+        }
+
+        event_queue.dispatch_pending(&mut state)?;
+
         state.process_commands(&qh);
 
         if state.exit {
             break;
         }
 
-        if state.need_redraw {
+        if state.need_redraw && state.visible {
             state.draw(&qh);
+        }
+
+        let _ = event_queue.flush();
+
+        let fd = conn.as_fd().as_raw_fd();
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let ret = unsafe { libc::poll(&mut pfd, 1, 50) };
+        if ret < 0 {
+            break;
         }
     }
 
