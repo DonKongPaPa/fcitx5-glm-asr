@@ -136,8 +136,12 @@ async fn main() {
                 }
 
                 *state.audio.lock().await = Some(capture);
-                if let Some(ref ov) = *state.overlay {
-                    ov.send(overlay::OverlayCommand::Show);
+                match &*state.overlay {
+                    Some(ov) => {
+                        info!("overlay: sending Show command");
+                        ov.send(overlay::OverlayCommand::Show);
+                    }
+                    None => {}
                 }
                 let _ = reply.try_send(IpcResponse::status(true));
             }

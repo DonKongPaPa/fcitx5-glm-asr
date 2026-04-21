@@ -234,8 +234,8 @@ impl OverlayState {
                     if !self.visible {
                         self.visible = true;
                         self.need_redraw = true;
+                        info!("overlay: received Show command, drawing...");
                         self.draw(qh);
-                        debug!("overlay: shown");
                     }
                 }
                 OverlayCommand::Hide => {
@@ -243,7 +243,7 @@ impl OverlayState {
                         self.visible = false;
                         self.layer.wl_surface().attach(None::<&WlBuffer>, 0, 0);
                         self.layer.commit();
-                        debug!("overlay: hidden");
+                        info!("overlay: received Hide command");
                     }
                 }
                 OverlayCommand::SetText(_) => {
