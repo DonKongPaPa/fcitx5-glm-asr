@@ -2,6 +2,7 @@ mod asr;
 mod audio;
 mod config;
 mod ipc;
+mod overlay;
 mod resample;
 
 use clap::Parser;
@@ -24,6 +25,7 @@ struct DaemonState {
     audio: Arc<Mutex<Option<audio::AudioCapture>>>,
     asr_client: RwLock<asr::AsrClient>,
     config: RwLock<config::Config>,
+    overlay: Arc<Option<overlay::OverlayHandle>>,
 }
 
 #[tokio::main]
@@ -60,10 +62,18 @@ async fn main() {
         &cfg.hotwords,
     );
 
+    let overlay_handle = overlay::try_spawn_overlay();
+    if overlay_handle.is_some() {
+        info!("overlay: initialized successfully");
+    } else {
+        warn!("overlay: failed to initialize (no wlr-layer-shell support?), running without overlay");
+    }
+
     let state = Arc::new(DaemonState {
         audio: Arc::new(Mutex::new(None)),
         asr_client: RwLock::new(asr_client),
         config: RwLock::new(cfg.clone()),
+        overlay: Arc::new(overlay_handle),
     });
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<DaemonCommand>(32);
@@ -126,6 +136,9 @@ async fn main() {
                 }
 
                 *state.audio.lock().await = Some(capture);
+                if let Some(ref ov) = *state.overlay {
+                    ov.send(overlay::OverlayCommand::Show);
+                }
                 let _ = reply.try_send(IpcResponse::status(true));
             }
 
@@ -175,12 +188,19 @@ async fn main() {
                 let _ = reply.try_send(IpcResponse::status(false));
 
                 let client = state.asr_client.read().await.clone();
+                let overlay = state.overlay.clone();
                 tokio::spawn(async move {
                     match client.recognize(wav_data).await {
                         Ok(text) => {
+                            if let Some(ref ov) = *overlay {
+                                ov.send(overlay::OverlayCommand::Hide);
+                            }
                             let _ = reply.try_send(IpcResponse::result(&text));
                         }
                         Err(e) => {
+                            if let Some(ref ov) = *overlay {
+                                ov.send(overlay::OverlayCommand::Hide);
+                            }
                             let _ = reply.try_send(IpcResponse::error(&format!("ASR failed: {}", e)));
                         }
                     }
