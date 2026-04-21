@@ -147,77 +147,57 @@ void GlmAsrAddon::handleKeyEvent(fcitx::KeyEvent &keyEvent) {
     auto *ic = keyEvent.inputContext();
     if (!ic) return;
 
-    if (!keyEvent.key().check(FcitxKey_Control_R)) {
+    if (!keyEvent.key().checkKeyList(config_.triggerKey.value())) {
         return;
     }
 
     keyEvent.filterAndAccept();
 
-    if (!keyEvent.isRelease() && state_ == State::Idle) {
-        state_ = State::Armed;
-        currentIc_ = ic;
+    TriggerMode mode = config_.triggerMode.value();
 
-        uint64_t deadline = fcitx::now(CLOCK_MONOTONIC) + ARM_THRESHOLD_USEC;
-        armTimer_ = instance_->eventLoop().addTimeEvent(
-            CLOCK_MONOTONIC, deadline, 0,
-            [this](fcitx::EventSourceTime *src, uint64_t) {
-                onArmTimer(src, 0);
-                return true;
-            });
-        return;
-    }
+    if (mode == TriggerMode::Hold) {
+        if (!keyEvent.isRelease() && state_ == State::Idle) {
+            state_ = State::Armed;
+            currentIc_ = ic;
 
-    if (keyEvent.isRelease()) {
-        armTimer_.reset();
-
-        if (state_ == State::Armed) {
-            state_ = State::Idle;
-            currentIc_ = nullptr;
+            uint64_t deadline = fcitx::now(CLOCK_MONOTONIC) + ARM_THRESHOLD_USEC;
+            armTimer_ = instance_->eventLoop().addTimeEvent(
+                CLOCK_MONOTONIC, deadline, 0,
+                [this](fcitx::EventSourceTime *src, uint64_t) {
+                    onArmTimer(src, 0);
+                    return true;
+                });
             return;
         }
 
-        if (state_ == State::Recording) {
-            state_ = State::Processing;
-            showStatus("\xe2\x8f\xb3 \xe8\xaf\x86\xe5\x88\xab\xe4\xb8\xad...");
+        if (keyEvent.isRelease()) {
+            armTimer_.reset();
 
-            cleanupIO(recordIO_, recordFd_);
-
-            int fd = connectToDaemon();
-            if (fd < 0) {
-                showStatus("\xe2\x9d\x8c \xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\xae\x88\xe6\x8a\xa4\xe8\xbf\x9b\xe7\xa8\x8b");
+            if (state_ == State::Armed) {
                 state_ = State::Idle;
                 currentIc_ = nullptr;
                 return;
             }
 
-            std::string cmd = "{\"cmd\":\"stop_record\"}\n";
-            ssize_t w = write(fd, cmd.c_str(), cmd.size());
-            if (w < 0 || static_cast<size_t>(w) != cmd.size()) {
-                ::close(fd);
-                showStatus("\xe2\x9d\x8c \xe5\x8f\x91\xe9\x80\x81\xe5\xa4\xb1\xe8\xb4\xa5");
-                state_ = State::Idle;
-                currentIc_ = nullptr;
-                return;
+            if (state_ == State::Recording) {
+                stopRecording();
             }
+        }
+    } else {
+        if (keyEvent.isRelease()) return;
 
-            resultFd_ = fd;
-            resultBuf_.clear();
-            resultIc_ = currentIc_;
-
-            resultIO_ = instance_->eventLoop().addIOEvent(
-                fd, fcitx::IOEventFlag::In,
-                [this](fcitx::EventSourceIO *src, int fd, fcitx::IOEventFlags flags) {
-                    onResultIO(src, fd, flags);
-                    return true;
-                });
+        if (state_ == State::Idle) {
+            currentIc_ = ic;
+            startRecording(ic);
+        } else if (state_ == State::Recording) {
+            stopRecording();
         }
     }
 }
 
-void GlmAsrAddon::onArmTimer(fcitx::EventSourceTime *, uint64_t) {
-    if (state_ != State::Armed) return;
-
+void GlmAsrAddon::startRecording(fcitx::InputContext *ic) {
     state_ = State::Recording;
+    currentIc_ = ic;
     showStatus("\xf0\x9f\x8e\x99\xef\xb8\x8f \xe6\xad\xa3\xe5\x9c\xa8\xe5\xbd\x95\xe9\x9f\xb3...");
 
     int fd = connectToDaemon();
@@ -247,6 +227,50 @@ void GlmAsrAddon::onArmTimer(fcitx::EventSourceTime *, uint64_t) {
             onRecordIO(src, fd, flags);
             return true;
         });
+}
+
+void GlmAsrAddon::stopRecording() {
+    if (state_ != State::Recording) return;
+
+    state_ = State::Processing;
+    showStatus("\xe2\x8f\xb3 \xe8\xaf\x86\xe5\x88\xab\xe4\xb8\xad...");
+
+    cleanupIO(recordIO_, recordFd_);
+
+    int fd = connectToDaemon();
+    if (fd < 0) {
+        showStatus("\xe2\x9d\x8c \xe6\x97\xa0\xe6\xb3\x95\xe8\xbf\x9e\xe6\x8e\xa5\xe5\xae\x88\xe6\x8a\xa4\xe8\xbf\x9b\xe7\xa8\x8b");
+        state_ = State::Idle;
+        currentIc_ = nullptr;
+        return;
+    }
+
+    std::string cmd = "{\"cmd\":\"stop_record\"}\n";
+    ssize_t w = write(fd, cmd.c_str(), cmd.size());
+    if (w < 0 || static_cast<size_t>(w) != cmd.size()) {
+        ::close(fd);
+        showStatus("\xe2\x9d\x8c \xe5\x8f\x91\xe9\x80\x81\xe5\xa4\xb1\xe8\xb4\xa5");
+        state_ = State::Idle;
+        currentIc_ = nullptr;
+        return;
+    }
+
+    resultFd_ = fd;
+    resultBuf_.clear();
+    resultIc_ = currentIc_;
+
+    resultIO_ = instance_->eventLoop().addIOEvent(
+        fd, fcitx::IOEventFlag::In,
+        [this](fcitx::EventSourceIO *src, int fd, fcitx::IOEventFlags flags) {
+            onResultIO(src, fd, flags);
+            return true;
+        });
+}
+
+void GlmAsrAddon::onArmTimer(fcitx::EventSourceTime *, uint64_t) {
+    if (state_ != State::Armed) return;
+
+    startRecording(currentIc_);
 }
 
 void GlmAsrAddon::onRecordIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags flags) {

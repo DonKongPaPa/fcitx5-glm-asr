@@ -9,6 +9,7 @@
 #include <fcitx-utils/i18n.h>
 #include <fcitx-utils/handlertable.h>
 #include <fcitx-utils/eventloopinterface.h>
+#include <fcitx-utils/key.h>
 #include <fcitx/instance.h>
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputpanel.h>
@@ -21,8 +22,23 @@
 enum class SampleRate { R8000, R16000, R44100, R48000 };
 FCITX_CONFIG_ENUM_NAME_WITH_I18N(SampleRate, N_("8000"), N_("16000"), N_("44100"), N_("48000"))
 
+enum class TriggerMode { Hold, Toggle };
+FCITX_CONFIG_ENUM_NAME_WITH_I18N(TriggerMode, N_("Hold"), N_("Toggle"))
+
 FCITX_CONFIGURATION(
     GlmAsrConfig,
+    fcitx::KeyListOption triggerKey{
+        this,
+        "TriggerKey",
+        "Record Trigger Key",
+        {fcitx::Key("Control_R")},
+        fcitx::KeyListConstrain({fcitx::KeyConstrainFlag::AllowModifierOnly,
+                                 fcitx::KeyConstrainFlag::AllowModifierLess})};
+    fcitx::OptionWithAnnotation<TriggerMode, TriggerModeI18NAnnotation> triggerMode{
+        this,
+        "TriggerMode",
+        "Trigger Mode",
+        TriggerMode::Hold};
     fcitx::Option<std::string> apiKey{
         this,
         "ApiKey",
@@ -75,6 +91,9 @@ private:
 
     static std::string parseJsonField(const std::string &json, const std::string &key);
     static std::string escapeJson(const std::string &s);
+
+    void startRecording(fcitx::InputContext *ic);
+    void stopRecording();
 
     fcitx::Instance *instance_;
     GlmAsrConfig config_;
