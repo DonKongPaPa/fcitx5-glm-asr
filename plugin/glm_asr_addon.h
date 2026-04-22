@@ -59,6 +59,11 @@ FCITX_CONFIGURATION(
         "SampleRate",
         "Sample Rate (Hz)",
         SampleRate::R16000};
+    fcitx::Option<bool> useOverlay{
+        this,
+        "UseOverlay",
+        "Use Overlay Window",
+        true};
 );
 
 class GlmAsrAddon : public fcitx::AddonInstance {

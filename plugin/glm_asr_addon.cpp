@@ -89,7 +89,8 @@ bool GlmAsrAddon::sendConfigToDaemon() {
         "\"api_key\":\"" + escapeJson(config_.apiKey.value()) + "\","
         "\"model\":\"" + escapeJson(config_.model.value()) + "\","
         "\"api_url\":\"" + escapeJson(config_.apiUrl.value()) + "\","
-        "\"sample_rate\":" + SampleRateToString(config_.sampleRate.value()) +
+        "\"sample_rate\":" + SampleRateToString(config_.sampleRate.value()) + ","
+        "\"use_overlay\":" + (config_.useOverlay.value() ? "true" : "false") +
     "}\n";
 
     ssize_t w = write(fd, cmd.c_str(), cmd.size());
@@ -198,7 +199,10 @@ void GlmAsrAddon::handleKeyEvent(fcitx::KeyEvent &keyEvent) {
 void GlmAsrAddon::startRecording(fcitx::InputContext *ic) {
     state_ = State::Recording;
     currentIc_ = ic;
-    showStatus("\xf0\x9f\x8e\x99\xef\xb8\x8f \xe6\xad\xa3\xe5\x9c\xa8\xe5\xbd\x95\xe9\x9f\xb3...");
+
+    if (!config_.useOverlay.value()) {
+        showStatus("\xf0\x9f\x8e\x99\xef\xb8\x8f \xe6\xad\xa3\xe5\x9c\xa8\xe5\xbd\x95\xe9\x9f\xb3...");
+    }
 
     int fd = connectToDaemon();
     if (fd < 0) {
@@ -233,7 +237,10 @@ void GlmAsrAddon::stopRecording() {
     if (state_ != State::Recording) return;
 
     state_ = State::Processing;
-    showStatus("\xe2\x8f\xb3 \xe8\xaf\x86\xe5\x88\xab\xe4\xb8\xad...");
+
+    if (!config_.useOverlay.value()) {
+        showStatus("\xe2\x8f\xb3 \xe8\xaf\x86\xe5\x88\xab\xe4\xb8\xad...");
+    }
 
     cleanupIO(recordIO_, recordFd_);
 
@@ -325,24 +332,32 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
             cleanupIO(resultIO_, resultFd_);
 
             if (!text.empty() && resultIc_) {
-                state_ = State::ResultReady;
-                pendingResult_ = text;
-
-                std::string display = "\xe2\x9c\x85 ";
-                if (text.size() > 20) {
-                    display += text.substr(0, 20) + "...";
+                if (config_.useOverlay.value()) {
+                    state_ = State::Idle;
+                    commitText(text);
+                    clearStatus();
+                    currentIc_ = nullptr;
+                    resultIc_ = nullptr;
                 } else {
-                    display += text;
-                }
-                showStatus(display);
+                    state_ = State::ResultReady;
+                    pendingResult_ = text;
 
-                uint64_t deadline = fcitx::now(CLOCK_MONOTONIC) + DISPLAY_DELAY_USEC;
-                displayTimer_ = instance_->eventLoop().addTimeEvent(
-                    CLOCK_MONOTONIC, deadline, 0,
-                    [this](fcitx::EventSourceTime *, uint64_t) {
-                        onDisplayTimer(nullptr, 0);
-                        return true;
-                    });
+                    std::string display = "\xe2\x9c\x85 ";
+                    if (text.size() > 20) {
+                        display += text.substr(0, 20) + "...";
+                    } else {
+                        display += text;
+                    }
+                    showStatus(display);
+
+                    uint64_t deadline = fcitx::now(CLOCK_MONOTONIC) + DISPLAY_DELAY_USEC;
+                    displayTimer_ = instance_->eventLoop().addTimeEvent(
+                        CLOCK_MONOTONIC, deadline, 0,
+                        [this](fcitx::EventSourceTime *, uint64_t) {
+                            onDisplayTimer(nullptr, 0);
+                            return true;
+                        });
+                }
             } else {
                 clearStatus();
                 state_ = State::Idle;
@@ -353,7 +368,9 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
         }
         if (type == "error") {
             std::string msg = parseJsonField(line, "message");
-            showStatus("\xe2\x9d\x8c " + msg);
+            if (!config_.useOverlay.value()) {
+                showStatus("\xe2\x9d\x8c " + msg);
+            }
             cleanupIO(resultIO_, resultFd_);
             state_ = State::Idle;
             currentIc_ = nullptr;
