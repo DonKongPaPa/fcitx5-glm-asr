@@ -2,6 +2,7 @@ mod asr;
 mod audio;
 mod config;
 mod ipc;
+mod overlay;
 mod resample;
 
 use clap::Parser;
@@ -9,6 +10,9 @@ use ipc::{DaemonCommand, IpcResponse};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
+
+const MAX_RECORD_SECS: u32 = 30;
+const FEEDBACK_INTERVAL_MS: u64 = 33;
 
 #[derive(Parser, Debug)]
 #[command(name = "glm-asrd", about = "GLM ASR daemon for voice typing")]
@@ -18,12 +22,34 @@ struct Args {
 
     #[arg(short, long, default_value = "info", help = "Log level")]
     log_level: String,
+
+    #[arg(long, help = "Mock ASR mode: return fake results instead of calling API")]
+    mock_asr: bool,
 }
 
 struct DaemonState {
     audio: Arc<Mutex<Option<audio::AudioCapture>>>,
     asr_client: RwLock<asr::AsrClient>,
     config: RwLock<config::Config>,
+    overlay: Arc<Option<overlay::OverlayHandle>>,
+    recording_start: Arc<Mutex<Option<std::time::Instant>>>,
+    auto_stop_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<()>>>>,
+    mock_asr: bool,
+    use_overlay: Arc<std::sync::Mutex<bool>>,
+}
+
+impl DaemonState {
+    fn should_show_overlay(&self) -> bool {
+        self.use_overlay.lock().map_or(true, |g| *g) && self.overlay.is_some()
+    }
+
+    fn send_overlay(&self, cmd: overlay::OverlayCommand) {
+        if self.should_show_overlay() {
+            if let Some(ref ov) = *self.overlay {
+                ov.send(cmd);
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -60,11 +86,32 @@ async fn main() {
         &cfg.hotwords,
     );
 
+    let overlay_handle = overlay::try_spawn_overlay();
+    if overlay_handle.is_some() {
+        info!("overlay: initialized successfully");
+    } else {
+        warn!("overlay: failed to initialize (no wlr-layer-shell support?), running without overlay");
+    }
+
+    let mock_asr = args.mock_asr || std::env::var("GLM_ASR_MOCK").is_ok();
+    if mock_asr {
+        info!("mock ASR mode enabled - returning fake results");
+    }
+
     let state = Arc::new(DaemonState {
         audio: Arc::new(Mutex::new(None)),
         asr_client: RwLock::new(asr_client),
         config: RwLock::new(cfg.clone()),
+        overlay: Arc::new(overlay_handle),
+        recording_start: Arc::new(Mutex::new(None)),
+        auto_stop_tx: Arc::new(Mutex::new(None)),
+        mock_asr,
+        use_overlay: Arc::new(std::sync::Mutex::new(true)),
     });
+
+    if args.mock_asr {
+        info!("mock ASR mode enabled - returning fake results");
+    }
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<DaemonCommand>(32);
 
@@ -100,7 +147,10 @@ async fn main() {
                     &hotwords,
                 );
                 *state.asr_client.write().await = new_client;
-                info!("Config updated from plugin");
+                if let Ok(mut uo) = state.use_overlay.lock() {
+                    *uo = params.use_overlay;
+                }
+                info!("Config updated from plugin (use_overlay={})", params.use_overlay);
                 let _ = reply.try_send(IpcResponse::status(false));
             }
 
@@ -126,10 +176,60 @@ async fn main() {
                 }
 
                 *state.audio.lock().await = Some(capture);
+                *state.recording_start.lock().await = Some(std::time::Instant::now());
+
+                state.send_overlay(overlay::OverlayCommand::Show);
+
+                let audio = state.audio.clone();
+                let overlay = state.overlay.clone();
+                let recording_start = state.recording_start.clone();
+                let use_overlay = state.use_overlay.clone();
+                let (auto_tx, mut auto_rx) = tokio::sync::mpsc::channel::<()>(1);
+                *state.auto_stop_tx.lock().await = Some(auto_tx.clone());
+
+                tokio::spawn(async move {
+                    let should_ov = use_overlay.lock().map_or(true, |g| *g);
+                    loop {
+                        tokio::select! {
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(FEEDBACK_INTERVAL_MS)) => {
+                                let audio_guard = audio.lock().await;
+                                if let Some(ref capture) = *audio_guard {
+                                    let vol = capture.current_volume();
+                                    if should_ov {
+                                        if let Some(ref ov) = *overlay {
+                                            ov.send(overlay::OverlayCommand::SetVolume(vol));
+                                        }
+                                    }
+                                    let start_guard = recording_start.lock().await;
+                                    if let Some(start) = *start_guard {
+                                        let elapsed_s = start.elapsed().as_secs_f32();
+                                        let remaining = (MAX_RECORD_SECS as f32 - elapsed_s).max(0.0);
+                                        if remaining <= 0.0 {
+                                            drop(start_guard);
+                                            drop(audio_guard);
+                                            let _ = auto_tx.send(()).await;
+                                            return;
+                                        }
+                                    }
+                                } else {
+                                    return;
+                                }
+                            }
+                            _ = auto_rx.recv() => {
+                                return;
+                            }
+                        }
+                    }
+                });
+
                 let _ = reply.try_send(IpcResponse::status(true));
             }
 
             DaemonCommand::StopRecord { reply } => {
+                if let Some(tx) = state.auto_stop_tx.lock().await.take() {
+                    let _ = tx.send(()).await;
+                }
+
                 let mut audio_guard = state.audio.lock().await;
                 let mut capture = match audio_guard.take() {
                     Some(c) => c,
@@ -174,17 +274,66 @@ async fn main() {
 
                 let _ = reply.try_send(IpcResponse::status(false));
 
-                let client = state.asr_client.read().await.clone();
-                tokio::spawn(async move {
-                    match client.recognize(wav_data).await {
-                        Ok(text) => {
-                            let _ = reply.try_send(IpcResponse::result(&text));
+                if state.mock_asr {
+                    let overlay = state.overlay.clone();
+                    let should_ov = state.should_show_overlay();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        let mock_text = "这是一条模拟识别结果，用于调试overlay界面显示效果。";
+                        if should_ov {
+                            if let Some(ref ov) = *overlay {
+                                ov.send(overlay::OverlayCommand::SetText(mock_text.to_string()));
+                            }
                         }
-                        Err(e) => {
-                            let _ = reply.try_send(IpcResponse::error(&format!("ASR failed: {}", e)));
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        if should_ov {
+                            if let Some(ref ov) = *overlay {
+                                ov.send(overlay::OverlayCommand::Hide);
+                            }
                         }
-                    }
-                });
+                        let _ = reply.try_send(IpcResponse::result(mock_text));
+                    });
+                } else {
+                    let client = state.asr_client.read().await.clone();
+                    let overlay = state.overlay.clone();
+                    let should_ov = state.should_show_overlay();
+                    tokio::spawn(async move {
+                        match client.recognize(wav_data).await {
+                            Ok(text) => {
+                                if should_ov {
+                                    if let Some(ref ov) = *overlay {
+                                        if text.is_empty() {
+                                            ov.send(overlay::OverlayCommand::SetError("未识别到语音内容".to_string()));
+                                        } else {
+                                            ov.send(overlay::OverlayCommand::SetText(text.clone()));
+                                        }
+                                    }
+                                }
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                if should_ov {
+                                    if let Some(ref ov) = *overlay {
+                                        ov.send(overlay::OverlayCommand::Hide);
+                                    }
+                                }
+                                let _ = reply.try_send(IpcResponse::result(&text));
+                            }
+                            Err(e) => {
+                                if should_ov {
+                                    if let Some(ref ov) = *overlay {
+                                        ov.send(overlay::OverlayCommand::SetError(format!("识别失败: {}", e)));
+                                    }
+                                }
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                if should_ov {
+                                    if let Some(ref ov) = *overlay {
+                                        ov.send(overlay::OverlayCommand::Hide);
+                                    }
+                                }
+                                let _ = reply.try_send(IpcResponse::error(&format!("ASR failed: {}", e)));
+                            }
+                        }
+                    });
+                }
             }
 
             DaemonCommand::Ping { reply } => {

@@ -8,6 +8,7 @@ pub struct AudioCapture {
     stream: Option<Stream>,
     sample_rate: u32,
     channels: u16,
+    volume: Arc<Mutex<f32>>,
 }
 
 impl AudioCapture {
@@ -17,6 +18,7 @@ impl AudioCapture {
             stream: None,
             sample_rate: 0,
             channels: 0,
+            volume: Arc::new(Mutex::new(0.0)),
         })
     }
 
@@ -46,6 +48,9 @@ impl AudioCapture {
         let samples = self.samples.clone();
         samples.lock().unwrap().clear();
 
+        let volume = self.volume.clone();
+        *volume.lock().unwrap() = 0.0;
+
         let stream = match supported_config.sample_format() {
             SampleFormat::F32 => device.build_input_stream(
                 &config,
@@ -53,17 +58,27 @@ impl AudioCapture {
                     if let Ok(mut buf) = samples.lock() {
                         buf.extend_from_slice(data);
                     }
+                    let rms = (data.iter().map(|s| s * s).sum::<f32>() / data.len() as f32).sqrt();
+                    if let Ok(mut v) = volume.lock() {
+                        *v = rms;
+                    }
                 },
                 |err| error!("Audio capture error: {}", err),
                 None,
             )?,
             SampleFormat::I16 => {
                 let samples_i16 = self.samples.clone();
+                let vol_i16 = self.volume.clone();
                 device.build_input_stream(
                     &config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        let converted: Vec<f32> = data.iter().map(|&s| s as f32 / 32768.0).collect();
                         if let Ok(mut buf) = samples_i16.lock() {
-                            buf.extend(data.iter().map(|&s| s as f32 / 32768.0));
+                            buf.extend(&converted);
+                        }
+                        let rms = (converted.iter().map(|s| s * s).sum::<f32>() / converted.len() as f32).sqrt();
+                        if let Ok(mut v) = vol_i16.lock() {
+                            *v = rms;
                         }
                     },
                     |err| error!("Audio capture error: {}", err),
@@ -72,11 +87,17 @@ impl AudioCapture {
             }
             SampleFormat::U16 => {
                 let samples_u16 = self.samples.clone();
+                let vol_u16 = self.volume.clone();
                 device.build_input_stream(
                     &config,
                     move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        let converted: Vec<f32> = data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0).collect();
                         if let Ok(mut buf) = samples_u16.lock() {
-                            buf.extend(data.iter().map(|&s| (s as f32 - 32768.0) / 32768.0));
+                            buf.extend(&converted);
+                        }
+                        let rms = (converted.iter().map(|s| s * s).sum::<f32>() / converted.len() as f32).sqrt();
+                        if let Ok(mut v) = vol_u16.lock() {
+                            *v = rms;
                         }
                     },
                     |err| error!("Audio capture error: {}", err),
@@ -115,5 +136,9 @@ impl AudioCapture {
 
     pub fn source_channels(&self) -> u16 {
         self.channels
+    }
+
+    pub fn current_volume(&self) -> f32 {
+        *self.volume.lock().unwrap()
     }
 }

@@ -57,6 +57,7 @@ pub struct SetConfigParams {
     pub model: String,
     pub api_url: String,
     pub sample_rate: u32,
+    pub use_overlay: bool,
 }
 
 pub enum DaemonCommand {
@@ -140,6 +141,7 @@ async fn handle_client(
                         .unwrap_or("https://open.bigmodel.cn/api/paas/v4/audio/transcriptions")
                         .to_string(),
                     sample_rate: msg.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(16000) as u32,
+                    use_overlay: msg.get("use_overlay").and_then(|v| v.as_bool()).unwrap_or(true),
                 };
                 cmd_tx.send(DaemonCommand::SetConfig { params, reply: reply_tx }).await?;
             }

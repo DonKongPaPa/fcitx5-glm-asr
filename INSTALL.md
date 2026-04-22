@@ -3,9 +3,13 @@
 ## 系统要求
 
 - Linux x86_64
+- **Wayland** 会话（X11 不支持 overlay）
 - **fcitx5 >= 5.1**
-- PipeWire 或 ALSA（录音后端）
+- **PipeWire**（录音后端）
+- **Wayland compositor 需支持 `wlr-layer-shell-unstable-v1` 协议**（KDE Plasma 6、Sway、Hyprland 等支持；GNOME/Mutter 不支持 layer-shell，需关闭 Use Overlay 改用候选框）
 - 网络连接（调用 GLM ASR API）
+
+> **多显示器提示**：overlay 在所有支持 layer-shell 的 compositor 上均可正常使用。其中自动跟随当前活跃显示器仅 **KDE Plasma 6** 支持，其他桌面环境中 overlay 显示在默认显示器上。GNOME 用户请在配置中关闭 **Use Overlay** 选项。
 
 ---
 
@@ -36,6 +40,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 - **Model** — ASR 模型名称（默认 `glm-asr-2512`）
 - **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
 - **Sample Rate** — 录音采样率（默认 16000 Hz）
+- **Use Overlay** — 启用 overlay 实时反馈（默认开启）
 
 ---
 
@@ -46,7 +51,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 ```bash
 sudo apt install rustc cargo cmake g++ pkg-config \
   libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
-  libasound2-dev
+  libasound2-dev libwayland-dev
 ```
 
 ### 编译
@@ -92,6 +97,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 - **Model** — ASR 模型名称（默认 `glm-asr-2512`）
 - **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
 - **Sample Rate** — 录音采样率（默认 16000 Hz）
+- **Use Overlay** — 启用 overlay 实时反馈（默认开启）
 
 ---
 
@@ -105,7 +111,7 @@ Fedora 39+ / RHEL 9+（需要 fcitx5 >= 5.1）
 
 ```bash
 sudo dnf install rust cargo cmake gcc-c++ pkgconf-pkg-config \
-  fcitx5-devel alsa-lib-devel
+  fcitx5-devel alsa-lib-devel wayland-devel
 ```
 
 ### 编译
@@ -151,6 +157,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 - **Model** — ASR 模型名称（默认 `glm-asr-2512`）
 - **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
 - **Sample Rate** — 录音采样率（默认 16000 Hz）
+- **Use Overlay** — 启用 overlay 实时反馈（默认开启）
 
 ---
 
