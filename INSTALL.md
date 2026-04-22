@@ -41,6 +41,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 - **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
 - **Sample Rate** — 录音采样率（默认 16000 Hz）
 - **Use Overlay** — 启用 overlay 实时反馈（默认开启）
+- **Overlay Renderer** — 渲染后端：`Software`（CPU，默认）或 `Vello (Experimental)`（GPU，需要 Vulkan 兼容 GPU 且编译时启用 `vello-renderer` feature）
 
 ---
 
@@ -60,9 +61,12 @@ sudo apt install rustc cargo cmake g++ pkg-config \
 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
 cd fcitx5-glm-asr
 
-# 编译 daemon
+# 编译 daemon（默认 Software 渲染器）
 cd daemon
 cargo build --release
+
+# 或启用 Vello GPU 渲染器（实验性，需要 Vulkan 兼容 GPU）
+# cargo build --release --features vello-renderer
 cd ..
 
 # 编译 plugin
@@ -98,6 +102,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 - **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
 - **Sample Rate** — 录音采样率（默认 16000 Hz）
 - **Use Overlay** — 启用 overlay 实时反馈（默认开启）
+- **Overlay Renderer** — 渲染后端：`Software`（默认）或 `Vello (Experimental)`（GPU，需编译时启用 vello-renderer feature）
 
 ---
 
@@ -120,9 +125,12 @@ sudo dnf install rust cargo cmake gcc-c++ pkgconf-pkg-config \
 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
 cd fcitx5-glm-asr
 
-# 编译 daemon
+# 编译 daemon（默认 Software 渲染器）
 cd daemon
 cargo build --release
+
+# 或启用 Vello GPU 渲染器（实验性，需要 Vulkan 兼容 GPU）
+# cargo build --release --features vello-renderer
 cd ..
 
 # 编译 plugin
@@ -158,6 +166,7 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 - **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
 - **Sample Rate** — 录音采样率（默认 16000 Hz）
 - **Use Overlay** — 启用 overlay 实时反馈（默认开启）
+- **Overlay Renderer** — 渲染后端：`Software`（默认）或 `Vello (Experimental)`（GPU，需编译时启用 vello-renderer feature）
 
 ---
 

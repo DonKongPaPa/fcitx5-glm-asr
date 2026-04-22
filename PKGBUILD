@@ -15,7 +15,7 @@ build() {
     cd "$srcdir/$pkgname-$pkgver"
 
     cd daemon
-    cargo build --release --locked
+    cargo build --release --locked --features vello-renderer
     cd ..
 
     mkdir -p build

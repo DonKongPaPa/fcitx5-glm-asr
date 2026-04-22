@@ -7,9 +7,11 @@
 ## 功能
 
 - 长按快捷键（默认右 Ctrl）录音，松开识别（支持长按/切换两种模式）
-- **Overlay 实时反馈**：录音时显示进度环、倒计时、音量条；识别完成后显示结果文字
+- **Overlay 实时反馈**：录音时显示进度环、倒计时、波形可视化；识别完成后显示结果文字
+- **波形可视化**：基于峰值包络的实时波形，自动归一化 + 时间平滑，直观展示说话状态
+- **双渲染后端**：Software（CPU）和 Vello（GPU 实验性），可通过 fcitx5-configtool 运行时切换，无需重启
 - 候选框状态反馈（关闭 overlay 时的回退方案）
-- fcitx5-configtool 图形化配置（API Key、模型、采样率、快捷键等）
+- fcitx5-configtool 图形化配置（API Key、模型、采样率、快捷键、渲染器等）
 - 多显示器支持（自动跟随当前活跃显示器显示 overlay）
 
 ## 前置依赖
@@ -57,6 +59,9 @@ GNOME (Mutter) 不支持 layer-shell 协议，overlay 无法显示，请在配�
 - **Trigger Key** — 触发快捷键（默认右 Ctrl）
 - **Trigger Mode** — 触发模式：长按（Hold）或 按下切换（Toggle）
 - **Use Overlay** — 启用 overlay 实时反馈（默认开启）。关闭后回退到 fcitx5 候选框显示状态
+- **Overlay Renderer** — Overlay 渲染后端（默认 Software）
+  - `Software` — CPU 渲染，无额外依赖
+  - `Vello (Experimental)` — GPU 渲染（需要 Vulkan 兼容 GPU），通过 `--features vello-renderer` 编译启用
 
 ## 许可证
 
