@@ -6,7 +6,7 @@ pkgdesc="Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon"
 arch=('x86_64')
 url="https://github.com/DonKongPaPa/fcitx5-glm-asr"
 license=('MIT')
-depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland' 'vulkan-icd-loader')
+depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland' 'vulkan-icd-loader' 'openssl')
 makedepends=('rust' 'cargo' 'cmake' 'extra-cmake-modules' 'pkgconf' 'wayland-protocols' 'git')
 source=("git+${url}.git#tag=v$pkgver")
 sha256sums=('SKIP')
