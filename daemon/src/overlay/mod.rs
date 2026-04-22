@@ -174,10 +174,19 @@ impl OverlayState {
     }
 
     fn resize_for_text(&mut self, text: &str) -> bool {
-        let text_w = if let Some(sw) = self.renderer.as_any_mut().downcast_mut::<SoftwareRenderer>() {
+        let text_w = if let Some(sw) = self.renderer.as_any_mut().downcast_mut::<renderer::software::SoftwareRenderer>() {
             sw.measure_text_width(text)
         } else {
-            200.0
+            #[cfg(feature = "vello-renderer")]
+            {
+                if let Some(vr) = self.renderer.as_any_mut().downcast_mut::<renderer::vello::VelloRenderer>() {
+                    vr.measure_text_width(text)
+                } else {
+                    200.0
+                }
+            }
+            #[cfg(not(feature = "vello-renderer"))]
+            { 200.0 }
         };
         let content_pad = (BORDER_WIDTH + 10.0) * 2.0 + 20.0;
         let target_w = (text_w + content_pad).max(OVERLAY_WIDTH as f32).min(OVERLAY_MAX_WIDTH as f32) as u32;
@@ -353,8 +362,21 @@ fn run_overlay(
         OverlayRendererType::Vello => {
             #[cfg(feature = "vello-renderer")]
             {
-                info!("overlay: using Vello renderer (experimental)");
-                Box::new(renderer::vello::VelloRenderer::new(OVERLAY_WIDTH, OVERLAY_HEIGHT))
+                match renderer::vello::VelloRenderer::new(pool, OVERLAY_WIDTH, OVERLAY_HEIGHT) {
+                    Ok(r) => {
+                        info!("overlay: using Vello renderer (experimental)");
+                        Box::new(r)
+                    }
+                    Err(e) => {
+                        warn!("overlay: Vello init failed ({e}), falling back to software");
+                        let fallback_pool = SlotPool::new(
+                            OVERLAY_MAX_WIDTH as usize * OVERLAY_HEIGHT as usize * 4, &shm,
+                        )?;
+                        Box::new(renderer::software::SoftwareRenderer::new(
+                            fallback_pool, OVERLAY_WIDTH, OVERLAY_HEIGHT,
+                        ))
+                    }
+                }
             }
             #[cfg(not(feature = "vello-renderer"))]
             {

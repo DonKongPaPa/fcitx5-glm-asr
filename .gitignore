@@ -9,3 +9,5 @@ daemon/target/
 *.swp
 *~
 .DS_Store
+opencode.jsonc
+.opencode/
