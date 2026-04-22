@@ -20,7 +20,6 @@ pub struct DrawState<'a> {
     pub is_error: bool,
     pub fade_alpha: f32,
     pub waveform: &'a [f32],
-    pub scale_factor: f32,
 }
 
 pub trait OverlayRenderer: Send {
@@ -33,9 +32,5 @@ pub trait OverlayRenderer: Send {
 
     fn resize(&mut self, width: u32, height: u32, scale_factor: i32);
 
-    fn width(&self) -> u32;
-    fn height(&self) -> u32;
-
-    fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }

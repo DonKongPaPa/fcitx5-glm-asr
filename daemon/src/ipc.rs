@@ -7,11 +7,6 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IpcMessage {
-    pub cmd: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcResponse {
     #[serde(rename = "type")]
     pub msg_type: String,

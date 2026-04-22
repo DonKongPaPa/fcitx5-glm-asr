@@ -54,7 +54,7 @@ impl DaemonState {
     }
 
     fn swap_overlay_renderer(&self, new_type: overlay::OverlayRendererType) -> bool {
-        let mut guard = self.overlay.lock().unwrap();
+        let guard = self.overlay.lock().unwrap();
         if let Some(ref old) = *guard {
             old.send(overlay::OverlayCommand::Quit);
         }
@@ -143,10 +143,6 @@ async fn main() {
         use_overlay: Arc::new(std::sync::Mutex::new(true)),
         overlay_renderer: Arc::new(std::sync::Mutex::new(cfg.overlay_renderer.clone())),
     });
-
-    if args.mock_asr {
-        info!("mock ASR mode enabled - returning fake results");
-    }
 
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<DaemonCommand>(32);
 

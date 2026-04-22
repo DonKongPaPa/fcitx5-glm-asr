@@ -252,8 +252,7 @@ impl VelloRenderer {
                 let physical = glyph.physical((x_start as f32, y_offset), 1.0);
                 if let Some(img) = self.swash_cache.get_image(&mut self.font_system, physical.cache_key) {
                     let gw = img.placement.width as usize;
-                    let gh = img.placement.height as usize;
-                    if gw == 0 || gh == 0 { continue; }
+                    if gw == 0 { continue; }
                     let x_base = physical.x + img.placement.left;
                     let y_base = physical.y - img.placement.top as i32;
                     render_glyph(&mut self.pixel_buf, cw, ch, &img, x_base, y_base, text_color);
@@ -278,7 +277,6 @@ impl VelloRenderer {
 
 fn render_glyph(canvas: &mut [u8], cw: usize, ch: usize, img: &SwashImage, x_base: i32, y_base: i32, tc: (u8, u8, u8, u8)) {
     let gw = img.placement.width as usize;
-    let gh = img.placement.height as usize;
     match img.content {
         SwashContent::Mask => {
             for (ri, row) in img.data.chunks(gw).enumerate() {
@@ -467,7 +465,7 @@ impl OverlayRenderer for VelloRenderer {
         }
 
         let stride = w as i32 * 4;
-        let (buffer, mut canvas) = match self.pool.create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888) {
+        let (buffer, canvas) = match self.pool.create_buffer(w as i32, h as i32, stride, wl_shm::Format::Argb8888) {
             Ok(b) => b,
             Err(e) => { warn!("overlay: vello create_buffer failed: {e}"); return; }
         };
@@ -486,8 +484,5 @@ impl OverlayRenderer for VelloRenderer {
         self.rebuild_gpu_resources();
     }
 
-    fn width(&self) -> u32 { self.width }
-    fn height(&self) -> u32 { self.height }
-    fn as_any(&self) -> &dyn Any { self }
     fn as_any_mut(&mut self) -> &mut dyn Any { self }
 }

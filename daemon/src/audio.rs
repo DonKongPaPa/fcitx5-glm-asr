@@ -128,10 +128,6 @@ impl AudioCapture {
         Ok(result)
     }
 
-    pub fn is_recording(&self) -> bool {
-        self.stream.is_some()
-    }
-
     pub fn source_sample_rate(&self) -> u32 {
         self.sample_rate
     }

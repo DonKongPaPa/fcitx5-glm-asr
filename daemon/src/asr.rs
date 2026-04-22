@@ -5,9 +5,7 @@ use tracing::{debug, error, info};
 
 #[derive(Debug, Deserialize)]
 pub struct AsrResponse {
-    pub id: Option<String>,
     pub text: Option<String>,
-    pub request_id: Option<String>,
     pub error: Option<AsrError>,
 }
 

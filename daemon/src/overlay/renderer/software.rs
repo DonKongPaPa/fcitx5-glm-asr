@@ -276,10 +276,6 @@ impl SoftwareRenderer {
         }
     }
 
-    pub fn font_system_mut(&mut self) -> &mut FontSystem {
-        &mut self.font_system
-    }
-
     pub fn measure_text_width(&mut self, text: &str) -> f32 {
         measure_text_width(text, &mut self.font_system)
     }
@@ -498,18 +494,6 @@ impl OverlayRenderer for SoftwareRenderer {
         self.width = width;
         self.height = height;
         self.scale_factor = scale_factor as f32;
-    }
-
-    fn width(&self) -> u32 {
-        self.width
-    }
-
-    fn height(&self) -> u32 {
-        self.height
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 
     fn as_any_mut(&mut self) -> &mut dyn Any {

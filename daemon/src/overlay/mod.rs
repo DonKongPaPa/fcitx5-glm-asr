@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use renderer::{DrawState, OverlayRenderer};
-use renderer::software::SoftwareRenderer;
 use smithay_client_toolkit::{
     compositor::CompositorState,
     output::OutputState,
@@ -54,13 +53,9 @@ impl OverlayHandle {
             let _ = self.tx.send(cmd);
         }
     }
-
-    pub fn is_alive(&self) -> bool {
-        self.alive.load(Ordering::Relaxed)
-    }
 }
 
-struct OverlayState {
+pub(crate) struct OverlayState {
     registry_state: RegistryState,
     output_state: OutputState,
     compositor: CompositorState,
@@ -272,7 +267,6 @@ impl OverlayState {
             is_error: self.is_error,
             fade_alpha: self.fade_alpha,
             waveform: &self.waveform,
-            scale_factor: self.scale_factor as f32,
         };
 
         self.layer.wl_surface().set_buffer_scale(self.scale_factor);
