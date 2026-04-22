@@ -72,7 +72,9 @@ impl smithay_client_toolkit::compositor::CompositorHandler for OverlayState {
             self.scale_factor = new_factor;
             let phys_w = self.width * self.scale_factor as u32;
             let phys_h = self.height * self.scale_factor as u32;
-            self.renderer.resize(phys_w, phys_h, self.scale_factor);
+            if let Some(r) = self.renderer.as_mut() {
+                r.resize(phys_w, phys_h, self.scale_factor);
+            }
             if self.configured {
                 self.need_redraw = true;
             }
@@ -176,7 +178,9 @@ impl LayerShellHandler for OverlayState {
         self.need_redraw = true;
         let phys_w = self.width * self.scale_factor as u32;
         let phys_h = self.height * self.scale_factor as u32;
-        self.renderer.resize(phys_w, phys_h, self.scale_factor);
+        if let Some(r) = self.renderer.as_mut() {
+            r.resize(phys_w, phys_h, self.scale_factor);
+        }
         if self.visible {
             self.draw(qh);
         }
