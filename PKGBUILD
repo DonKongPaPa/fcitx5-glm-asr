@@ -7,7 +7,7 @@ arch=('x86_64')
 url="https://github.com/DonKongPaPa/fcitx5-glm-asr"
 license=('MIT')
 depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland' 'vulkan-icd-loader')
-makedepends=('rust' 'cargo' 'cmake' 'extra-cmake-modules' 'pkgconf' 'wayland-protocols' 'git' 'nasm')
+makedepends=('rust' 'cargo' 'cmake' 'extra-cmake-modules' 'pkgconf' 'wayland-protocols' 'git' 'go')
 source=("git+${url}.git#tag=v$pkgver")
 sha256sums=('SKIP')
 
