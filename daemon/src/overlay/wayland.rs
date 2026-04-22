@@ -17,7 +17,7 @@ use wayland_client::{
     Connection, Dispatch, QueueHandle,
 };
 
-use super::{OverlayState, OVERLAY_HEIGHT};
+use super::{OverlayState, OVERLAY_HEIGHT, OVERLAY_WIDTH};
 
 #[derive(Debug, Default, Clone)]
 pub struct ToplevelInner {
@@ -65,8 +65,18 @@ impl smithay_client_toolkit::compositor::CompositorHandler for OverlayState {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
         _surface: &WlSurface,
-        _new_factor: i32,
+        new_factor: i32,
     ) {
+        if new_factor != self.scale_factor {
+            info!("overlay: scale factor changed {} -> {}", self.scale_factor, new_factor);
+            self.scale_factor = new_factor;
+            let phys_w = self.width * self.scale_factor as u32;
+            let phys_h = self.height * self.scale_factor as u32;
+            self.renderer.resize(phys_w, phys_h, self.scale_factor);
+            if self.configured {
+                self.need_redraw = true;
+            }
+        }
     }
 
     fn transform_changed(
@@ -160,10 +170,13 @@ impl LayerShellHandler for OverlayState {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        self.width = NonZeroU32::new(configure.new_size.0).map_or(480, NonZeroU32::get);
+        self.width = NonZeroU32::new(configure.new_size.0).map_or(OVERLAY_WIDTH, NonZeroU32::get);
         self.height = NonZeroU32::new(configure.new_size.1).map_or(OVERLAY_HEIGHT, NonZeroU32::get);
         self.configured = true;
         self.need_redraw = true;
+        let phys_w = self.width * self.scale_factor as u32;
+        let phys_h = self.height * self.scale_factor as u32;
+        self.renderer.resize(phys_w, phys_h, self.scale_factor);
         if self.visible {
             self.draw(qh);
         }

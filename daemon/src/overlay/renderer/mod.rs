@@ -18,6 +18,9 @@ pub struct DrawState<'a> {
     pub volume: f32,
     pub display_text: &'a str,
     pub is_error: bool,
+    pub fade_alpha: f32,
+    pub waveform: &'a [f32],
+    pub scale_factor: f32,
 }
 
 pub trait OverlayRenderer: Send {
@@ -28,7 +31,7 @@ pub trait OverlayRenderer: Send {
         qh: &QueueHandle<OverlayState>,
     );
 
-    fn resize(&mut self, width: u32, height: u32);
+    fn resize(&mut self, width: u32, height: u32, scale_factor: i32);
 
     fn width(&self) -> u32;
     fn height(&self) -> u32;

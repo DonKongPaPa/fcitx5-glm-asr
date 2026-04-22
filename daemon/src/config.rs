@@ -25,6 +25,9 @@ pub struct Config {
 
     #[serde(default = "default_socket_path_suffix")]
     pub socket_path: String,
+
+    #[serde(default = "default_overlay_renderer")]
+    pub overlay_renderer: String,
 }
 
 fn default_api_key() -> String {
@@ -47,6 +50,10 @@ fn default_socket_path_suffix() -> String {
     "glm-asrd.sock".to_string()
 }
 
+fn default_overlay_renderer() -> String {
+    "Software".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -57,6 +64,7 @@ impl Default for Config {
             hotwords: vec![],
             hotword_manager_url: None,
             socket_path: default_socket_path_suffix(),
+            overlay_renderer: default_overlay_renderer(),
         }
     }
 }
@@ -130,5 +138,11 @@ impl Config {
             ));
         }
         Ok(())
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let config_path = Self::config_dir().join("config.json");
+        let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        fs::write(&config_path, json).map_err(|e| format!("Failed to write config: {}", e))
     }
 }

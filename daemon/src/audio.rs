@@ -9,6 +9,7 @@ pub struct AudioCapture {
     sample_rate: u32,
     channels: u16,
     volume: Arc<Mutex<f32>>,
+    prev_waveform: Mutex<Vec<f32>>,
 }
 
 impl AudioCapture {
@@ -19,6 +20,7 @@ impl AudioCapture {
             sample_rate: 0,
             channels: 0,
             volume: Arc::new(Mutex::new(0.0)),
+            prev_waveform: Mutex::new(Vec::new()),
         })
     }
 
@@ -140,5 +142,51 @@ impl AudioCapture {
 
     pub fn current_volume(&self) -> f32 {
         *self.volume.lock().unwrap()
+    }
+
+    pub fn current_waveform(&self, target_samples: usize) -> Vec<f32> {
+        let samples = self.samples.lock().unwrap();
+        if samples.is_empty() {
+            return Vec::new();
+        }
+        let len = samples.len();
+        let recent = samples.len().min((self.sample_rate as usize).max(8000));
+        let start = len.saturating_sub(recent);
+        let window_size = (recent / target_samples).max(1);
+        let mut result = Vec::with_capacity(target_samples);
+        for chunk_start in (start..len).step_by(window_size) {
+            let chunk_end = (chunk_start + window_size).min(len);
+            let chunk = &samples[chunk_start..chunk_end];
+            let peak = chunk.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+            let mapped = if peak < 0.008 { 0.0 } else { peak };
+            result.push(mapped);
+            if result.len() >= target_samples {
+                break;
+            }
+        }
+        let min_val = result.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_val = result.iter().cloned().fold(0.0f32, f32::max);
+        let range = max_val - min_val;
+        if range > 0.002 {
+            for v in &mut result {
+                *v = (*v - min_val) / range;
+            }
+        } else {
+            result.clear();
+        }
+        if result.len() >= 3 {
+            let orig = result.clone();
+            for i in 1..orig.len() - 1 {
+                result[i] = (orig[i - 1] + orig[i] + orig[i + 1]) / 3.0;
+            }
+        }
+        let mut prev = self.prev_waveform.lock().unwrap();
+        if prev.len() == result.len() {
+            for i in 0..result.len() {
+                result[i] = prev[i] * 0.7 + result[i] * 0.3;
+            }
+        }
+        *prev = result.clone();
+        result
     }
 }

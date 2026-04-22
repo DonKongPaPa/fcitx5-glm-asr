@@ -19,6 +19,7 @@ const COLOR_VOL_BG: [u8; 4] = [0x30, 0x30, 0x50, 0x80];
 const COLOR_TEXT: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
 const COLOR_ERROR_BORDER: [u8; 4] = [0xEF, 0x53, 0x50, 0xFF];
 const COLOR_ERROR_TEXT: [u8; 4] = [0xFF, 0xCD, 0xD2, 0xFF];
+const COLOR_WAVEFORM: [u8; 4] = [0x4C, 0xAF, 0x50, 0x99];
 
 fn alpha_blend(canvas: &mut [u8], offset: usize, src: &[u8; 4]) {
     if src[3] == 0 { return; }
@@ -137,9 +138,10 @@ fn render_text(
     text_color: [u8; 4],
     font_system: &mut FontSystem,
     swash_cache: &mut SwashCache,
+    scale: f32,
 ) {
-    let font_size = 15.0;
-    let line_height = 20.0;
+    let font_size = 15.0 * scale;
+    let line_height = 20.0 * scale;
     let metrics = Metrics::new(font_size, line_height);
 
     let attrs = Attrs::new()
@@ -257,6 +259,7 @@ pub struct SoftwareRenderer {
     pool: SlotPool,
     width: u32,
     height: u32,
+    scale_factor: f32,
     font_system: FontSystem,
     swash_cache: SwashCache,
 }
@@ -267,6 +270,7 @@ impl SoftwareRenderer {
             pool,
             width,
             height,
+            scale_factor: 1.0,
             font_system: FontSystem::new(),
             swash_cache: SwashCache::new(),
         }
@@ -295,6 +299,7 @@ impl OverlayRenderer for SoftwareRenderer {
             return;
         }
 
+        let scale = self.scale_factor;
         let width_usize = width as usize;
         let height_usize = height as usize;
         let stride = width as i32 * 4;
@@ -322,8 +327,8 @@ impl OverlayRenderer for SoftwareRenderer {
         if state.visible {
             let w = width_usize as f32;
             let h = height_usize as f32;
-            let bw = BORDER_WIDTH;
-            let r_outer = CORNER_RADIUS;
+            let bw = BORDER_WIDTH * scale;
+            let r_outer = CORNER_RADIUS * scale;
             let r_inner = (r_outer - bw).max(0.0);
             let inner_w = (w - 2.0 * bw).max(1.0);
             let inner_h = (h - 2.0 * bw).max(1.0);
@@ -335,6 +340,19 @@ impl OverlayRenderer for SoftwareRenderer {
             let corner_arc = std::f32::consts::PI * r_outer * 0.5;
             let perimeter = 2.0 * seg_top + 2.0 * seg_right + 4.0 * corner_arc;
             let active_len = countdown_frac * perimeter;
+
+            let fade = state.fade_alpha;
+            let fade_color = |c: [u8; 4]| -> [u8; 4] {
+                [c[0], c[1], c[2], (c[3] as f32 * fade) as u8]
+            };
+            let color_bg = fade_color(COLOR_BG);
+            let color_progress = fade_color(COLOR_PROGRESS);
+            let color_progress_bg = fade_color(COLOR_PROGRESS_BG);
+            let color_vol = fade_color(COLOR_VOL);
+            let color_vol_bg = fade_color(COLOR_VOL_BG);
+            let color_error_border = fade_color(COLOR_ERROR_BORDER);
+            let color_text = fade_color(COLOR_TEXT);
+            let color_error_text = fade_color(COLOR_ERROR_TEXT);
 
             let margin = 2;
             for y in margin..height_usize - margin {
@@ -365,21 +383,21 @@ impl OverlayRenderer for SoftwareRenderer {
                             let soft_edge = 2.0;
                             let t = ((active_len - d) / soft_edge + 0.5).clamp(0.0, 1.0);
                             if t >= 1.0 {
-                                blend_pixel(canvas, offset, &COLOR_PROGRESS, border_cov);
+                                blend_pixel(canvas, offset, &color_progress, border_cov);
                             } else if t <= 0.0 {
-                                blend_pixel(canvas, offset, &COLOR_PROGRESS_BG, border_cov);
+                                blend_pixel(canvas, offset, &color_progress_bg, border_cov);
                             } else {
-                                let r = (COLOR_PROGRESS_BG[0] as f32 * (1.0 - t) + COLOR_PROGRESS[0] as f32 * t) as u8;
-                                let g = (COLOR_PROGRESS_BG[1] as f32 * (1.0 - t) + COLOR_PROGRESS[1] as f32 * t) as u8;
-                                let b = (COLOR_PROGRESS_BG[2] as f32 * (1.0 - t) + COLOR_PROGRESS[2] as f32 * t) as u8;
-                                let a = (COLOR_PROGRESS_BG[3] as f32 * (1.0 - t) + COLOR_PROGRESS[3] as f32 * t) as u8;
+                                let r = (color_progress_bg[0] as f32 * (1.0 - t) + color_progress[0] as f32 * t) as u8;
+                                let g = (color_progress_bg[1] as f32 * (1.0 - t) + color_progress[1] as f32 * t) as u8;
+                                let b = (color_progress_bg[2] as f32 * (1.0 - t) + color_progress[2] as f32 * t) as u8;
+                                let a = (color_progress_bg[3] as f32 * (1.0 - t) + color_progress[3] as f32 * t) as u8;
                                 blend_pixel(canvas, offset, &[r, g, b, a], border_cov);
                             }
                         } else {
                             let border_color = if state.is_error {
-                                COLOR_ERROR_BORDER
+                                color_error_border
                             } else {
-                                COLOR_PROGRESS
+                                color_progress
                             };
                             blend_pixel(canvas, offset, &border_color, border_cov);
                         }
@@ -388,15 +406,15 @@ impl OverlayRenderer for SoftwareRenderer {
                     if inner_cov > 0.0 {
                         let offset = (y * width_usize + x) * 4;
                         if offset + 3 < canvas.len() {
-                            blend_pixel(canvas, offset, &COLOR_BG, inner_cov);
+                            blend_pixel(canvas, offset, &color_bg, inner_cov);
                         }
                     }
                 }
             }
 
-            let text_color = if state.is_error { COLOR_ERROR_TEXT } else { COLOR_TEXT };
-            let content_pad = (BORDER_WIDTH + 10.0) as usize;
-            let text_y = height_usize / 2 - 4;
+            let text_color = if state.is_error { color_error_text } else { color_text };
+            let content_pad = (BORDER_WIDTH * scale + 10.0 * scale) as usize;
+            let text_y = height_usize / 2 - (4.0 * scale) as usize;
             let status_text = if state.is_recording {
                 format!("🎙  录音中 {}s", state.remaining_secs as u32)
             } else {
@@ -408,19 +426,65 @@ impl OverlayRenderer for SoftwareRenderer {
                 content_pad, text_y,
                 text_color,
                 &mut self.font_system, &mut self.swash_cache,
+                scale,
             );
 
             if state.is_recording {
-                let vol_bar_h = 6usize;
-                let vol_bar_y = height_usize - content_pad - vol_bar_h;
-                let vol_bar_max_w = width_usize - content_pad * 2;
-                let vol_w = ((state.volume.min(1.0).max(0.0) * vol_bar_max_w as f32) as usize).min(vol_bar_max_w);
+                if !state.waveform.is_empty() {
+                    let color_wave = fade_color(COLOR_WAVEFORM);
+                    let bw_f = BORDER_WIDTH * scale;
+                    let pad = (bw_f * 0.3) as usize;
+                    let area_w = (width_usize - 2 * pad) as f32;
+                    let center_y = height_usize as f32 * 0.52;
+                    let max_amp = (height_usize as f32 - 2.0 * bw_f) * 0.45;
+                    let n = state.waveform.len() as f32;
+                    let step_x = area_w / n;
+                    let cy = center_y as usize;
 
-                fill_rect_aa(&mut canvas, width_usize, height_usize,
-                             content_pad, vol_bar_y, vol_bar_max_w, vol_bar_h, COLOR_VOL_BG);
-                if vol_w > 0 {
+                    let amps: Vec<f32> = state.waveform.iter().map(|&a| a.min(1.0)).collect();
+
+                    for x in pad..width_usize - pad {
+                        let fx = (x - pad) as f32;
+                        let pos = fx / step_x;
+                        let i = pos as usize;
+                        let frac = pos - i as f32;
+                        let amp = if i + 1 < amps.len() {
+                            amps[i] * (1.0 - frac) + amps[i + 1] * frac
+                        } else if i < amps.len() {
+                            amps[i]
+                        } else {
+                            0.0
+                        };
+                        let half_h = (amp * max_amp) as usize;
+                        for dy in 0..half_h {
+                            let top_y = cy.saturating_sub(dy + 1);
+                            let bot_y = cy + dy;
+                            if top_y < height_usize {
+                                let offset = (top_y * width_usize + x) * 4;
+                                if offset + 3 < canvas.len() {
+                                    alpha_blend(canvas, offset, &color_wave);
+                                }
+                            }
+                            if bot_y < height_usize {
+                                let offset = (bot_y * width_usize + x) * 4;
+                                if offset + 3 < canvas.len() {
+                                    alpha_blend(canvas, offset, &color_wave);
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let vol_bar_h = (6.0 * scale) as usize;
+                    let vol_bar_y = height_usize - content_pad - vol_bar_h;
+                    let vol_bar_max_w = width_usize - content_pad * 2;
+                    let vol_w = ((state.volume.min(1.0).max(0.0) * vol_bar_max_w as f32) as usize).min(vol_bar_max_w);
+
                     fill_rect_aa(&mut canvas, width_usize, height_usize,
-                                 content_pad, vol_bar_y, vol_w, vol_bar_h, COLOR_VOL);
+                                 content_pad, vol_bar_y, vol_bar_max_w, vol_bar_h, color_vol_bg);
+                    if vol_w > 0 {
+                        fill_rect_aa(&mut canvas, width_usize, height_usize,
+                                     content_pad, vol_bar_y, vol_w, vol_bar_h, color_vol);
+                    }
                 }
             }
         }
@@ -430,9 +494,10 @@ impl OverlayRenderer for SoftwareRenderer {
         layer.commit();
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
+    fn resize(&mut self, width: u32, height: u32, scale_factor: i32) {
         self.width = width;
         self.height = height;
+        self.scale_factor = scale_factor as f32;
     }
 
     fn width(&self) -> u32 {

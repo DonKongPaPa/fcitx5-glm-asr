@@ -30,12 +30,14 @@ const OVERLAY_BOTTOM_MARGIN: i32 = 84;
 pub(crate) const BORDER_WIDTH: f32 = 5.0;
 pub(crate) const CORNER_RADIUS: f32 = 14.0;
 pub(crate) const MAX_RECORD_SECS: u32 = 30;
+const FADE_DURATION: f32 = 0.3;
 
 #[derive(Debug, Clone)]
 pub enum OverlayCommand {
     Show,
     Hide,
     SetVolume(f32),
+    SetWaveform(Vec<f32>),
     SetText(String),
     SetError(String),
     Quit,
@@ -66,7 +68,9 @@ struct OverlayState {
     shm: Shm,
     width: u32,
     height: u32,
+    scale_factor: i32,
     need_redraw: bool,
+    pending_reset_size: bool,
     visible: bool,
     configured: bool,
     exit: bool,
@@ -76,9 +80,13 @@ struct OverlayState {
     layer_output: Option<wl_output::WlOutput>,
     ft_state: ForeignToplevelState,
     volume: f32,
+    waveform: Vec<f32>,
     countdown_start: Option<std::time::Instant>,
     is_error: bool,
     display_text: String,
+    fade_alpha: f32,
+    fade_target: f32,
+    fade_start: Option<std::time::Instant>,
     renderer: Box<dyn OverlayRenderer>,
 }
 
@@ -192,7 +200,9 @@ impl OverlayState {
         let target_w = (text_w + content_pad).max(OVERLAY_WIDTH as f32).min(OVERLAY_MAX_WIDTH as f32) as u32;
         if target_w != self.width {
             self.width = target_w;
-            self.renderer.resize(target_w, OVERLAY_HEIGHT);
+            let phys_w = target_w * self.scale_factor as u32;
+            let phys_h = OVERLAY_HEIGHT * self.scale_factor as u32;
+            self.renderer.resize(phys_w, phys_h, self.scale_factor);
             self.layer.set_size(target_w, OVERLAY_HEIGHT);
             self.layer.commit();
             true
@@ -204,7 +214,9 @@ impl OverlayState {
     fn reset_size(&mut self) {
         if self.width != OVERLAY_WIDTH {
             self.width = OVERLAY_WIDTH;
-            self.renderer.resize(OVERLAY_WIDTH, OVERLAY_HEIGHT);
+            let phys_w = OVERLAY_WIDTH * self.scale_factor as u32;
+            let phys_h = OVERLAY_HEIGHT * self.scale_factor as u32;
+            self.renderer.resize(phys_w, phys_h, self.scale_factor);
             self.layer.set_size(OVERLAY_WIDTH, OVERLAY_HEIGHT);
             self.layer.commit();
         }
@@ -213,6 +225,27 @@ impl OverlayState {
     fn draw(&mut self, qh: &QueueHandle<Self>) {
         if !self.configured || self.width == 0 || self.height == 0 {
             return;
+        }
+
+        if let Some(start) = self.fade_start {
+            let elapsed = start.elapsed().as_secs_f32();
+            let t = (elapsed / FADE_DURATION).min(1.0);
+            let smooth = t * t * (3.0 - 2.0 * t);
+            self.fade_alpha = if self.fade_target > 0.5 { smooth } else { 1.0 - smooth };
+            if t >= 1.0 {
+                self.fade_start = None;
+                self.fade_alpha = self.fade_target;
+                if self.fade_target < 0.5 {
+                    self.visible = false;
+                    self.volume = 0.0;
+                    self.countdown_start = None;
+                    self.is_error = false;
+                    self.display_text.clear();
+                    self.waveform.clear();
+                    self.pending_reset_size = true;
+                }
+            }
+            self.need_redraw = true;
         }
 
         let countdown_frac = if let Some(start) = self.countdown_start {
@@ -237,12 +270,16 @@ impl OverlayState {
             volume: self.volume,
             display_text: &self.display_text,
             is_error: self.is_error,
+            fade_alpha: self.fade_alpha,
+            waveform: &self.waveform,
+            scale_factor: self.scale_factor as f32,
         };
 
+        self.layer.wl_surface().set_buffer_scale(self.scale_factor);
         self.renderer.draw(&draw_state, &self.layer, qh);
         self.need_redraw = false;
 
-        if self.visible && self.countdown_start.is_some() {
+        if self.visible && (self.countdown_start.is_some() || self.fade_start.is_some()) {
             self.layer.wl_surface().frame(qh, self.layer.wl_surface().clone());
         }
     }
@@ -254,7 +291,11 @@ impl OverlayState {
                     self.visible = true;
                     self.is_error = false;
                     self.display_text.clear();
+                    self.waveform.clear();
                     self.countdown_start = Some(std::time::Instant::now());
+                    self.fade_alpha = 0.0;
+                    self.fade_target = 1.0;
+                    self.fade_start = Some(std::time::Instant::now());
                     self.ensure_output(qh);
                     if self.configured && self.width == OVERLAY_WIDTH {
                         self.need_redraw = true;
@@ -263,22 +304,34 @@ impl OverlayState {
                     }
                 }
                 OverlayCommand::Hide => {
-                    self.visible = false;
-                    self.volume = 0.0;
+                    self.fade_target = 0.0;
+                    self.fade_start = Some(std::time::Instant::now());
                     self.countdown_start = None;
-                    self.is_error = false;
-                    self.display_text.clear();
-                    self.need_redraw = true;
-                    self.draw(qh);
+                    if self.fade_alpha <= 0.0 {
+                        self.visible = false;
+                        self.volume = 0.0;
+                        self.is_error = false;
+                        self.display_text.clear();
+                        self.waveform.clear();
+                        self.need_redraw = true;
+                        self.draw(qh);
+                    } else {
+                        self.need_redraw = true;
+                    }
                 }
                 OverlayCommand::SetVolume(vol) => {
                     self.volume = vol;
+                    self.need_redraw = true;
+                }
+                OverlayCommand::SetWaveform(samples) => {
+                    self.waveform = samples;
                     self.need_redraw = true;
                 }
                 OverlayCommand::SetText(text) => {
                     self.display_text = text;
                     self.is_error = false;
                     self.countdown_start = None;
+                    self.waveform.clear();
                     let txt = self.display_text.clone();
                     if !self.resize_for_text(&txt) {
                         self.need_redraw = true;
@@ -288,6 +341,7 @@ impl OverlayState {
                     self.display_text = text;
                     self.is_error = true;
                     self.countdown_start = None;
+                    self.waveform.clear();
                     let txt = self.display_text.clone();
                     if !self.resize_for_text(&txt) {
                         self.need_redraw = true;
@@ -301,6 +355,7 @@ impl OverlayState {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum OverlayRendererType {
     Software,
     Vello,
@@ -356,7 +411,7 @@ fn run_overlay(
     layer.set_margin(OVERLAY_BOTTOM_MARGIN, 0, OVERLAY_BOTTOM_MARGIN, 0);
     layer.commit();
 
-    let pool = SlotPool::new(OVERLAY_MAX_WIDTH as usize * OVERLAY_HEIGHT as usize * 4, &shm)?;
+    let pool = SlotPool::new(OVERLAY_MAX_WIDTH as usize * 2 * OVERLAY_HEIGHT as usize * 2 * 4, &shm)?;
 
     let renderer: Box<dyn OverlayRenderer> = match renderer_type {
         OverlayRendererType::Vello => {
@@ -370,7 +425,7 @@ fn run_overlay(
                     Err(e) => {
                         warn!("overlay: Vello init failed ({e}), falling back to software");
                         let fallback_pool = SlotPool::new(
-                            OVERLAY_MAX_WIDTH as usize * OVERLAY_HEIGHT as usize * 4, &shm,
+                            OVERLAY_MAX_WIDTH as usize * 2 * OVERLAY_HEIGHT as usize * 2 * 4, &shm,
                         )?;
                         Box::new(renderer::software::SoftwareRenderer::new(
                             fallback_pool, OVERLAY_WIDTH, OVERLAY_HEIGHT,
@@ -397,7 +452,9 @@ fn run_overlay(
         shm,
         width: OVERLAY_WIDTH,
         height: OVERLAY_HEIGHT,
+        scale_factor: 1,
         need_redraw: false,
+        pending_reset_size: false,
         visible: false,
         configured: false,
         exit: false,
@@ -407,9 +464,13 @@ fn run_overlay(
         layer_output: None,
         ft_state,
         volume: 0.0,
+        waveform: Vec::new(),
         countdown_start: None,
         is_error: false,
         display_text: String::new(),
+        fade_alpha: 0.0,
+        fade_target: 0.0,
+        fade_start: None,
         renderer,
     };
 
@@ -443,8 +504,17 @@ fn run_overlay(
             state.need_redraw = true;
         }
 
+        if state.fade_start.is_some() {
+            state.need_redraw = true;
+        }
+
         if state.need_redraw {
             state.draw(&qh);
+        }
+
+        if state.pending_reset_size {
+            state.pending_reset_size = false;
+            state.reset_size();
         }
 
         let _ = event_queue.flush();

@@ -31,7 +31,7 @@ struct DaemonState {
     audio: Arc<Mutex<Option<audio::AudioCapture>>>,
     asr_client: RwLock<asr::AsrClient>,
     config: RwLock<config::Config>,
-    overlay: Arc<Option<overlay::OverlayHandle>>,
+    overlay: Arc<std::sync::Mutex<Option<overlay::OverlayHandle>>>,
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
     auto_stop_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<()>>>>,
     mock_asr: bool,
@@ -41,13 +41,39 @@ struct DaemonState {
 
 impl DaemonState {
     fn should_show_overlay(&self) -> bool {
-        self.use_overlay.lock().map_or(true, |g| *g) && self.overlay.is_some()
+        self.use_overlay.lock().map_or(true, |g| *g)
+            && self.overlay.lock().map_or(false, |g| g.is_some())
     }
 
     fn send_overlay(&self, cmd: overlay::OverlayCommand) {
         if self.should_show_overlay() {
-            if let Some(ref ov) = *self.overlay {
+            if let Some(ref ov) = *self.overlay.lock().unwrap() {
                 ov.send(cmd);
+            }
+        }
+    }
+
+    fn swap_overlay_renderer(&self, new_type: overlay::OverlayRendererType) -> bool {
+        let mut guard = self.overlay.lock().unwrap();
+        if let Some(ref old) = *guard {
+            old.send(overlay::OverlayCommand::Quit);
+        }
+        drop(guard);
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let new_handle = overlay::try_spawn_overlay(new_type);
+        let mut guard = self.overlay.lock().unwrap();
+        match new_handle {
+            Some(h) => {
+                *guard = Some(h);
+                info!("overlay: renderer swapped to {:?}", new_type);
+                true
+            }
+            None => {
+                warn!("overlay: failed to spawn new renderer, old overlay is gone");
+                *guard = None;
+                false
             }
         }
     }
@@ -87,7 +113,14 @@ async fn main() {
         &cfg.hotwords,
     );
 
-    let overlay_handle = overlay::try_spawn_overlay(overlay::OverlayRendererType::Software);
+    let renderer_type = if cfg.overlay_renderer.starts_with("Vello") {
+        overlay::OverlayRendererType::Vello
+    } else {
+        overlay::OverlayRendererType::Software
+    };
+    info!("overlay: selected renderer = {:?}", renderer_type);
+
+    let overlay_handle = overlay::try_spawn_overlay(renderer_type);
     if overlay_handle.is_some() {
         info!("overlay: initialized successfully");
     } else {
@@ -101,14 +134,14 @@ async fn main() {
 
     let state = Arc::new(DaemonState {
         audio: Arc::new(Mutex::new(None)),
-        asr_client: RwLock::new(asr_client),
+        asr_client: RwLock::new(asr_client.clone()),
         config: RwLock::new(cfg.clone()),
-        overlay: Arc::new(overlay_handle),
+        overlay: Arc::new(std::sync::Mutex::new(overlay_handle)),
         recording_start: Arc::new(Mutex::new(None)),
         auto_stop_tx: Arc::new(Mutex::new(None)),
         mock_asr,
         use_overlay: Arc::new(std::sync::Mutex::new(true)),
-        overlay_renderer: Arc::new(std::sync::Mutex::new("Software".to_string())),
+        overlay_renderer: Arc::new(std::sync::Mutex::new(cfg.overlay_renderer.clone())),
     });
 
     if args.mock_asr {
@@ -134,12 +167,21 @@ async fn main() {
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             DaemonCommand::SetConfig { params, reply } => {
+                let renderer_changed = {
+                    let old_renderer = state.overlay_renderer.lock().unwrap();
+                    *old_renderer != params.overlay_renderer
+                };
+
                 {
                     let mut cfg = state.config.write().await;
                     cfg.api_key = params.api_key.clone();
                     cfg.model = params.model.clone();
                     cfg.api_url = params.api_url.clone();
                     cfg.sample_rate = params.sample_rate;
+                    cfg.overlay_renderer = params.overlay_renderer.clone();
+                    if let Err(e) = cfg.save() {
+                        warn!("Failed to save config: {}", e);
+                    }
                 }
                 let hotwords = state.config.read().await.hotwords.clone();
                 let new_client = asr::AsrClient::new(
@@ -155,6 +197,19 @@ async fn main() {
                 if let Ok(mut or) = state.overlay_renderer.lock() {
                     *or = params.overlay_renderer.clone();
                 }
+
+                if renderer_changed {
+                    let new_type = if params.overlay_renderer.starts_with("Vello") {
+                        overlay::OverlayRendererType::Vello
+                    } else {
+                        overlay::OverlayRendererType::Software
+                    };
+                    let state_clone = state.clone();
+                    tokio::task::spawn_blocking(move || {
+                        state_clone.swap_overlay_renderer(new_type);
+                    });
+                }
+
                 info!("Config updated from plugin (use_overlay={}, overlay_renderer={})", params.use_overlay, params.overlay_renderer);
                 let _ = reply.try_send(IpcResponse::status(false));
             }
@@ -200,9 +255,11 @@ async fn main() {
                                 let audio_guard = audio.lock().await;
                                 if let Some(ref capture) = *audio_guard {
                                     let vol = capture.current_volume();
+                                    let waveform = capture.current_waveform(32);
                                     if should_ov {
-                                        if let Some(ref ov) = *overlay {
+                                        if let Some(ref ov) = *overlay.lock().unwrap() {
                                             ov.send(overlay::OverlayCommand::SetVolume(vol));
+                                            ov.send(overlay::OverlayCommand::SetWaveform(waveform));
                                         }
                                     }
                                     let start_guard = recording_start.lock().await;
@@ -286,13 +343,13 @@ async fn main() {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         let mock_text = "这是一条模拟识别结果，用于调试overlay界面显示效果。";
                         if should_ov {
-                            if let Some(ref ov) = *overlay {
+                            if let Some(ref ov) = *overlay.lock().unwrap() {
                                 ov.send(overlay::OverlayCommand::SetText(mock_text.to_string()));
                             }
                         }
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         if should_ov {
-                            if let Some(ref ov) = *overlay {
+                            if let Some(ref ov) = *overlay.lock().unwrap() {
                                 ov.send(overlay::OverlayCommand::Hide);
                             }
                         }
@@ -306,7 +363,7 @@ async fn main() {
                         match client.recognize(wav_data).await {
                             Ok(text) => {
                                 if should_ov {
-                                    if let Some(ref ov) = *overlay {
+                                    if let Some(ref ov) = *overlay.lock().unwrap() {
                                         if text.is_empty() {
                                             ov.send(overlay::OverlayCommand::SetError("未识别到语音内容".to_string()));
                                         } else {
@@ -316,7 +373,7 @@ async fn main() {
                                 }
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                 if should_ov {
-                                    if let Some(ref ov) = *overlay {
+                                    if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::Hide);
                                     }
                                 }
@@ -324,13 +381,13 @@ async fn main() {
                             }
                             Err(e) => {
                                 if should_ov {
-                                    if let Some(ref ov) = *overlay {
+                                    if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::SetError(format!("识别失败: {}", e)));
                                     }
                                 }
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                 if should_ov {
-                                    if let Some(ref ov) = *overlay {
+                                    if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::Hide);
                                     }
                                 }
