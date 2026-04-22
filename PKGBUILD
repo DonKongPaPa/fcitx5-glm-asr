@@ -6,13 +6,18 @@ pkgdesc="Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon"
 arch=('x86_64')
 url="https://github.com/DonKongPaPa/fcitx5-glm-asr"
 license=('MIT')
-depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland')
-makedepends=('rust' 'cargo' 'cmake' 'extra-cmake-modules' 'pkgconf' 'wayland-protocols')
-source=("$pkgname-$pkgver.tar.gz::https://github.com/DonKongPaPa/fcitx5-glm-asr/archive/v$pkgver.tar.gz")
+depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland' 'vulkan-icd-loader')
+makedepends=('rust' 'cargo' 'cmake' 'extra-cmake-modules' 'pkgconf' 'wayland-protocols' 'git')
+source=("git+${url}.git#tag=v$pkgver")
 sha256sums=('SKIP')
 
+prepare() {
+    cd "$srcdir/$pkgname/daemon"
+    cargo fetch --target "$CARCH-unknown-linux-gnu"
+}
+
 build() {
-    cd "$srcdir/$pkgname-$pkgver"
+    cd "$srcdir/$pkgname"
 
     cd daemon
     cargo build --release --locked --features vello-renderer
@@ -26,7 +31,7 @@ build() {
 }
 
 package() {
-    cd "$srcdir/$pkgname-$pkgver"
+    cd "$srcdir/$pkgname"
 
     install -Dm755 "daemon/target/release/glm-asrd" "$pkgdir/usr/bin/glm-asrd"
     install -Dm644 "data/glm-asrd.service" "$pkgdir/usr/lib/systemd/user/glm-asrd.service"
