@@ -25,6 +25,9 @@ FCITX_CONFIG_ENUM_NAME_WITH_I18N(SampleRate, N_("8000"), N_("16000"), N_("44100"
 enum class TriggerMode { Hold, Toggle };
 FCITX_CONFIG_ENUM_NAME_WITH_I18N(TriggerMode, N_("Hold"), N_("Toggle"))
 
+enum class OverlayRenderer { Software, Vello };
+FCITX_CONFIG_ENUM_NAME_WITH_I18N(OverlayRenderer, N_("Software"), N_("Vello (Experimental)"))
+
 FCITX_CONFIGURATION(
     GlmAsrConfig,
     fcitx::KeyListOption triggerKey{
@@ -64,6 +67,11 @@ FCITX_CONFIGURATION(
         "UseOverlay",
         "Use Overlay Window",
         true};
+    fcitx::OptionWithAnnotation<OverlayRenderer, OverlayRendererI18NAnnotation> overlayRenderer{
+        this,
+        "OverlayRenderer",
+        "Overlay Renderer",
+        OverlayRenderer::Software};
 );
 
 class GlmAsrAddon : public fcitx::AddonInstance {

@@ -90,7 +90,8 @@ bool GlmAsrAddon::sendConfigToDaemon() {
         "\"model\":\"" + escapeJson(config_.model.value()) + "\","
         "\"api_url\":\"" + escapeJson(config_.apiUrl.value()) + "\","
         "\"sample_rate\":" + SampleRateToString(config_.sampleRate.value()) + ","
-        "\"use_overlay\":" + (config_.useOverlay.value() ? "true" : "false") +
+        "\"use_overlay\":" + (config_.useOverlay.value() ? "true" : "false") + ","
+        "\"overlay_renderer\":\"" + OverlayRendererToString(config_.overlayRenderer.value()) + "\""
     "}\n";
 
     ssize_t w = write(fd, cmd.c_str(), cmd.size());

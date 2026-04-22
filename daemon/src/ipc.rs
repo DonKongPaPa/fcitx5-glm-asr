@@ -58,6 +58,7 @@ pub struct SetConfigParams {
     pub api_url: String,
     pub sample_rate: u32,
     pub use_overlay: bool,
+    pub overlay_renderer: String,
 }
 
 pub enum DaemonCommand {
@@ -142,6 +143,7 @@ async fn handle_client(
                         .to_string(),
                     sample_rate: msg.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(16000) as u32,
                     use_overlay: msg.get("use_overlay").and_then(|v| v.as_bool()).unwrap_or(true),
+                    overlay_renderer: msg.get("overlay_renderer").and_then(|v| v.as_str()).unwrap_or("Software").to_string(),
                 };
                 cmd_tx.send(DaemonCommand::SetConfig { params, reply: reply_tx }).await?;
             }

@@ -36,6 +36,7 @@ struct DaemonState {
     auto_stop_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<()>>>>,
     mock_asr: bool,
     use_overlay: Arc<std::sync::Mutex<bool>>,
+    overlay_renderer: Arc<std::sync::Mutex<String>>,
 }
 
 impl DaemonState {
@@ -86,7 +87,7 @@ async fn main() {
         &cfg.hotwords,
     );
 
-    let overlay_handle = overlay::try_spawn_overlay();
+    let overlay_handle = overlay::try_spawn_overlay(overlay::OverlayRendererType::Software);
     if overlay_handle.is_some() {
         info!("overlay: initialized successfully");
     } else {
@@ -107,6 +108,7 @@ async fn main() {
         auto_stop_tx: Arc::new(Mutex::new(None)),
         mock_asr,
         use_overlay: Arc::new(std::sync::Mutex::new(true)),
+        overlay_renderer: Arc::new(std::sync::Mutex::new("Software".to_string())),
     });
 
     if args.mock_asr {
@@ -150,7 +152,10 @@ async fn main() {
                 if let Ok(mut uo) = state.use_overlay.lock() {
                     *uo = params.use_overlay;
                 }
-                info!("Config updated from plugin (use_overlay={})", params.use_overlay);
+                if let Ok(mut or) = state.overlay_renderer.lock() {
+                    *or = params.overlay_renderer.clone();
+                }
+                info!("Config updated from plugin (use_overlay={}, overlay_renderer={})", params.use_overlay, params.overlay_renderer);
                 let _ = reply.try_send(IpcResponse::status(false));
             }
 

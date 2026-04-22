@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "GLM ASR daemon for voice typing on Linux"
 
+[features]
+default = []
+vello-renderer = ["dep:wgpu", "dep:vello", "dep:glyphon"]
+
 [dependencies]
 cpal = "0.17"
 hound = "3.5"
@@ -20,6 +24,9 @@ smithay-client-toolkit = "0.20"
 wayland-client = "0.31"
 tiny-skia = "0.12"
 cosmic-text = "0.14"
+wgpu = { version = "24", optional = true }
+vello = { version = "0.4", optional = true }
+glyphon = { version = "0.7", optional = true }
 
 [profile.release]
 opt-level = 3
