@@ -1,0 +1,12 @@
+services:
+  build-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      bash -c "
+        rm -rf fcitx5-glm-asr &&
+        git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git &&
+        cd fcitx5-glm-asr &&
+        makepkg -sf --noconfirm
+      "

@@ -14,39 +14,27 @@
 - fcitx5-configtool 图形化配置（API Key、模型、采样率、快捷键、渲染器等）
 - 多显示器支持（自动跟随当前活跃显示器显示 overlay）
 
-## 前置依赖
+## 快速开始（Arch Linux）
 
-### 必需
+```bash
+git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
+cd fcitx5-glm-asr
+makepkg -si
+```
+
+其他平台安装方式见 [INSTALL.md](INSTALL.md)。
+
+## 前置依赖
 
 - **Linux x86_64** + **Wayland** 会话
 - **fcitx5 >= 5.1**
 - **PipeWire**（录音后端）
+- **ALSA**（音频输入，通常已随系统安装）
 - **Wayland compositor 需支持 `wlr-layer-shell-unstable-v1` 协议**（overlay 显示必需）
-  - KDE Plasma 6（KWin）✅
-  - Sway / Hyprland / wlroots 系 ✅
+  - KDE Plasma 6（KWin）
+  - Sway / Hyprland / wlroots 系
   - GNOME (Mutter) — 不支持 layer-shell，需在配置中关闭 Use Overlay，改用候选框反馈
 - 网络连接（调用 GLM ASR API）
-
-### 编译依赖
-
-- Rust toolchain（rustc + cargo）
-- C++ 编译器（GCC 或 Clang）
-- CMake >= 3.16 + extra-cmake-modules
-- pkgconf / pkg-config
-- Wayland 开发库（libwayland）
-- fcitx5 开发库（libfcitx5core 等）
-
-### 多显示器说明
-
-overlay 在所有支持 layer-shell 的 compositor（KDE Plasma 6、Sway、Hyprland 等）上均可正常使用。
-
-其中**自动跟随当前活跃显示器**的功能需要 KDE Plasma 6（通过 D-Bus 查询）。其他桌面环境中 overlay 显示在默认/主显示器上，不影响录音识别功能。
-
-GNOME (Mutter) 不支持 layer-shell 协议，overlay 无法显示，请在配置中关闭 **Use Overlay** 选项，插件会自动回退到 fcitx5 候选框显示状态。
-
-## 安装
-
-详见 [INSTALL.md](INSTALL.md)
 
 ## 配置
 
@@ -61,7 +49,21 @@ GNOME (Mutter) 不支持 layer-shell 协议，overlay 无法显示，请在配�
 - **Use Overlay** — 启用 overlay 实时反馈（默认开启）。关闭后回退到 fcitx5 候选框显示状态
 - **Overlay Renderer** — Overlay 渲染后端（默认 Software）
   - `Software` — CPU 渲染，无额外依赖
-  - `Vello (Experimental)` — GPU 渲染（需要 Vulkan 兼容 GPU），通过 `--features vello-renderer` 编译启用
+  - `Vello (Experimental)` — GPU 渲染（需要 Vulkan 兼容 GPU），编译时需启用 `vello-renderer` feature
+
+## 多显示器说明
+
+overlay 在所有支持 layer-shell 的 compositor（KDE Plasma 6、Sway、Hyprland 等）上均可正常使用。
+
+其中**自动跟随当前活跃显示器**的功能需要 KDE Plasma 6（通过 D-Bus 查询）。其他桌面环境中 overlay 显示在默认/主显示器上，不影响录音识别功能。
+
+GNOME (Mutter) 不支持 layer-shell 协议，overlay 无法显示，请在配置中关闭 **Use Overlay** 选项，插件会自动回退到 fcitx5 候选框显示状态。
+
+## 更多文档
+
+- [安装指南](INSTALL.md) — Arch / Debian / Fedora / 通用 tarball
+- [贡献指南](CONTRIBUTING.md) — 开发环境搭建、Docker 编译验证、提交规范
+- [发版流程](RELEASING.md) — 维护者参考
 
 ## 许可证
 

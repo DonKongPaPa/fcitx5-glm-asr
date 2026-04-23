@@ -1,4 +1,4 @@
-# 编译安装指南
+# 安装指南
 
 ## 系统要求
 
@@ -15,12 +15,20 @@
 
 ## Arch Linux
 
-### 使用 PKGBUILD 构建
+### PKGBUILD 编译安装
 
 ```bash
 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
 cd fcitx5-glm-asr
 makepkg -si
+```
+
+### 预编译包安装（v0.2.0+）
+
+从 [GitHub Releases](https://github.com/DonKongPaPa/fcitx5-glm-asr/releases) 下载 `.pkg.tar.zst`：
+
+```bash
+sudo pacman -U fcitx5-glm-asr-*.pkg.tar.zst
 ```
 
 ### 启用
@@ -32,17 +40,6 @@ systemctl --user enable --now glm-asrd
 kill $(pgrep -f '/usr/bin/fcitx5$')
 ```
 
-### 配置
-
-打开 `fcitx5-configtool`，在插件管理中找到 **GLM ASR**，配置以下参数：
-
-- **API Key** — 智谱开放平台 API Key（必填）
-- **Model** — ASR 模型名称（默认 `glm-asr-2512`）
-- **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
-- **Sample Rate** — 录音采样率（默认 16000 Hz）
-- **Use Overlay** — 启用 overlay 实时反馈（默认开启）
-- **Overlay Renderer** — 渲染后端：`Software`（CPU，默认）或 `Vello (Experimental)`（GPU，需要 Vulkan 兼容 GPU 且编译时启用 `vello-renderer` feature）
-
 ---
 
 ## Debian / Ubuntu
@@ -50,23 +47,24 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 ### 安装编译依赖
 
 ```bash
-sudo apt install rustc cargo cmake g++ pkg-config \
-  libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
-  libasound2-dev libwayland-dev
+sudo apt install build-essential cmake g++ pkg-config \
+    extra-cmake-modules wayland-protocols git \
+    libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
+    libasound2-dev libwayland-dev libxkbcommon-dev \
+    libpipewire-0.3-dev
 ```
 
-### 编译
+> **注意**：项目使用 Cargo.lock v4，需要 Rust 1.87+。Debian stable 的系统 Rust 可能过旧，建议通过 [rustup](https://rustup.rs/) 安装最新版。
+
+### 编译安装
 
 ```bash
 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
 cd fcitx5-glm-asr
 
-# 编译 daemon（默认 Software 渲染器）
+# 编译 daemon
 cd daemon
-cargo build --release
-
-# 或启用 Vello GPU 渲染器（实验性，需要 Vulkan 兼容 GPU）
-# cargo build --release --features vello-renderer
+cargo build --release --locked --features vello-renderer
 cd ..
 
 # 编译 plugin
@@ -75,14 +73,20 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
 make
 ```
 
-### 安装
-
 ```bash
+# 安装
 cd /path/to/fcitx5-glm-asr
-
 sudo install -Dm755 daemon/target/release/glm-asrd /usr/bin/glm-asrd
 sudo make -C build install
 sudo install -Dm644 data/glm-asrd.service /usr/lib/systemd/user/glm-asrd.service
+```
+
+### 预编译包安装（v0.2.0+）
+
+从 [GitHub Releases](https://github.com/DonKongPaPa/fcitx5-glm-asr/releases) 下载 `.deb`：
+
+```bash
+sudo dpkg -i fcitx5-glm-asr_*.deb
 ```
 
 ### 启用
@@ -92,17 +96,6 @@ systemctl --user daemon-reload
 systemctl --user enable --now glm-asrd
 kill $(pgrep -f '/usr/bin/fcitx5$')
 ```
-
-### 配置
-
-打开 `fcitx5-configtool`，在插件管理中找到 **GLM ASR**，配置以下参数：
-
-- **API Key** — 智谱开放平台 API Key（必填）
-- **Model** — ASR 模型名称（默认 `glm-asr-2512`）
-- **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
-- **Sample Rate** — 录音采样率（默认 16000 Hz）
-- **Use Overlay** — 启用 overlay 实时反馈（默认开启）
-- **Overlay Renderer** — 渲染后端：`Software`（默认）或 `Vello (Experimental)`（GPU，需编译时启用 vello-renderer feature）
 
 ---
 
@@ -115,22 +108,23 @@ Fedora 39+ / RHEL 9+（需要 fcitx5 >= 5.1）
 ### 安装编译依赖
 
 ```bash
-sudo dnf install rust cargo cmake gcc-c++ pkgconf-pkg-config \
-  fcitx5-devel alsa-lib-devel wayland-devel
+sudo dnf install cmake gcc-c++ pkgconf-pkg-config \
+    extra-cmake-modules wayland-protocols-devel git \
+    fcitx5-devel alsa-lib-devel wayland-devel libxkbcommon-devel \
+    pipewire-devel
 ```
 
-### 编译
+> **注意**：项目使用 Cargo.lock v4，需要 Rust 1.87+。Fedora 系统包可能版本不够，建议通过 [rustup](https://rustup.rs/) 安装最新版。
+
+### 编译安装
 
 ```bash
 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
 cd fcitx5-glm-asr
 
-# 编译 daemon（默认 Software 渲染器）
+# 编译 daemon
 cd daemon
-cargo build --release
-
-# 或启用 Vello GPU 渲染器（实验性，需要 Vulkan 兼容 GPU）
-# cargo build --release --features vello-renderer
+cargo build --release --locked --features vello-renderer
 cd ..
 
 # 编译 plugin
@@ -139,14 +133,20 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
 make
 ```
 
-### 安装
-
 ```bash
+# 安装
 cd /path/to/fcitx5-glm-asr
-
 sudo install -Dm755 daemon/target/release/glm-asrd /usr/bin/glm-asrd
 sudo make -C build install
 sudo install -Dm644 data/glm-asrd.service /usr/lib/systemd/user/glm-asrd.service
+```
+
+### 预编译包安装（v0.2.0+）
+
+从 [GitHub Releases](https://github.com/DonKongPaPa/fcitx5-glm-asr/releases) 下载 `.rpm`：
+
+```bash
+sudo dnf install fcitx5-glm-asr-*.rpm
 ```
 
 ### 启用
@@ -157,39 +157,44 @@ systemctl --user enable --now glm-asrd
 kill $(pgrep -f '/usr/bin/fcitx5$')
 ```
 
-### 配置
+---
 
-打开 `fcitx5-configtool`，在插件管理中找到 **GLM ASR**，配置以下参数：
+## 通用 tarball（v0.2.0+）
 
-- **API Key** — 智谱开放平台 API Key（必填）
-- **Model** — ASR 模型名称（默认 `glm-asr-2512`）
-- **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
-- **Sample Rate** — 录音采样率（默认 16000 Hz）
-- **Use Overlay** — 启用 overlay 实时反馈（默认开启）
-- **Overlay Renderer** — 渲染后端：`Software`（默认）或 `Vello (Experimental)`（GPU，需编译时启用 vello-renderer feature）
+从 [GitHub Releases](https://github.com/DonKongPaPa/fcitx5-glm-asr/releases) 下载 `.tar.gz`：
+
+```bash
+tar xzf fcitx5-glm-asr-*.tar.gz
+cd fcitx5-glm-asr-*/
+sudo ./install.sh
+```
+
+---
+
+## 配置
+
+详见 [README.md](README.md#配置)。
 
 ---
 
 ## 卸载
 
-### Arch Linux（通过 pacman）
+### Arch Linux
 
 ```bash
 sudo pacman -R fcitx5-glm-asr
 ```
 
-### Debian / Fedora（手动编译安装）
+### Debian / Fedora / 通用 tarball
 
 ```bash
-# 停止服务
 systemctl --user disable --now glm-asrd
 
-# 删除已安装文件
 sudo rm -f /usr/bin/glm-asrd
 sudo rm -f /usr/lib/systemd/user/glm-asrd.service
 sudo rm -f /usr/share/fcitx5/addon/glm-asr.conf
 sudo rm -f $(find /usr/lib /usr/lib64 /usr/lib/x86_64-linux-gnu \
-  -path '*/fcitx5/glm-asr.so' 2>/dev/null)
+    -path '*/fcitx5/glm-asr.so' 2>/dev/null)
 
 # 可选：删除用户配置
 rm -rf ~/.config/glm-asrd

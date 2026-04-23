@@ -1,0 +1,23 @@
+services:
+  build-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: >
+      bash -c "
+        rm -rf fcitx5-glm-asr &&
+        GIT_SSL_NO_VERIFY=1 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git &&
+        cd fcitx5-glm-asr &&
+
+        echo '=== Building daemon ===' &&
+        cd daemon &&
+        cargo build --release --locked --features vello-renderer &&
+        cd .. &&
+
+        echo '=== Building plugin ===' &&
+        mkdir -p build &&
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr &&
+        make -C build &&
+
+        echo '=== BUILD SUCCESS ==='
+      "
