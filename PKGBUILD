@@ -13,7 +13,7 @@ sha256sums=('SKIP')
 
 prepare() {
     cd "$srcdir/$pkgname/daemon"
-    cargo fetch --target "$CARCH-unknown-linux-gnu"
+    cargo fetch --locked --target "$CARCH-unknown-linux-gnu"
 }
 
 build() {
