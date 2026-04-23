@@ -46,10 +46,25 @@ impl DaemonState {
     }
 
     fn send_overlay(&self, cmd: overlay::OverlayCommand) {
-        if self.should_show_overlay() {
-            if let Some(ref ov) = *self.overlay.lock().unwrap() {
-                ov.send(cmd);
-            }
+        if !self.use_overlay.lock().map_or(true, |g| *g) {
+            return;
+        }
+        let mut guard = self.overlay.lock().unwrap();
+        let alive = guard.as_ref().is_some_and(|ov| ov.is_alive());
+        if !alive {
+            let renderer_type = {
+                let r = self.overlay_renderer.lock().unwrap();
+                if r.starts_with("Vello") {
+                    overlay::OverlayRendererType::Vello
+                } else {
+                    overlay::OverlayRendererType::Software
+                }
+            };
+            info!("overlay: thread dead, re-spawning (type={renderer_type:?})");
+            *guard = overlay::try_spawn_overlay(renderer_type);
+        }
+        if let Some(ref ov) = *guard {
+            ov.send(cmd);
         }
     }
 
@@ -81,6 +96,10 @@ impl DaemonState {
 
 #[tokio::main]
 async fn main() {
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install ring crypto provider");
+
     let args = Args::parse();
 
     tracing_subscriber::fmt()

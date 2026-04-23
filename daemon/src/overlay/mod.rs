@@ -53,6 +53,10 @@ impl OverlayHandle {
             let _ = self.tx.send(cmd);
         }
     }
+
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::Relaxed)
+    }
 }
 
 pub(crate) struct OverlayState {
@@ -82,7 +86,8 @@ pub(crate) struct OverlayState {
     fade_alpha: f32,
     fade_target: f32,
     fade_start: Option<std::time::Instant>,
-    renderer: Box<dyn OverlayRenderer>,
+    renderer: Option<Box<dyn OverlayRenderer>>,
+    renderer_type: OverlayRendererType,
 }
 
 impl ProvidesRegistryState for OverlayState {
@@ -93,6 +98,60 @@ impl ProvidesRegistryState for OverlayState {
 }
 
 impl OverlayState {
+    fn ensure_renderer(&mut self) {
+        if self.renderer.is_some() {
+            return;
+        }
+        let pool_result = SlotPool::new(
+            OVERLAY_MAX_WIDTH as usize * 2 * OVERLAY_HEIGHT as usize * 2 * 4,
+            &self.shm,
+        );
+        let pool = match pool_result {
+            Ok(p) => p,
+            Err(e) => {
+                error!("overlay: failed to create SHM pool for renderer: {e}");
+                return;
+            }
+        };
+        let r: Box<dyn OverlayRenderer> = match self.renderer_type {
+            OverlayRendererType::Vello => {
+                #[cfg(feature = "vello-renderer")]
+                {
+                    match renderer::vello::VelloRenderer::new(pool, self.width, self.height) {
+                        Ok(r) => {
+                            info!("overlay: Vello renderer lazy-initialized");
+                            Box::new(r)
+                        }
+                        Err(e) => {
+                            warn!("overlay: Vello init failed ({e}), falling back to software");
+                            let fallback_pool = SlotPool::new(
+                                OVERLAY_MAX_WIDTH as usize * 2 * OVERLAY_HEIGHT as usize * 2 * 4,
+                                &self.shm,
+                            );
+                            match fallback_pool {
+                                Ok(p) => Box::new(renderer::software::SoftwareRenderer::new(p, self.width, self.height)),
+                                Err(e2) => {
+                                    error!("overlay: fallback pool failed: {e2}");
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                #[cfg(not(feature = "vello-renderer"))]
+                {
+                    warn!("overlay: Vello renderer requested but not compiled, falling back to software");
+                    Box::new(renderer::software::SoftwareRenderer::new(pool, self.width, self.height))
+                }
+            }
+            OverlayRendererType::Software => {
+                info!("overlay: Software renderer initialized");
+                Box::new(renderer::software::SoftwareRenderer::new(pool, self.width, self.height))
+            }
+        };
+        self.renderer = Some(r);
+    }
+
     fn create_layer(&mut self, qh: &QueueHandle<Self>, output: Option<&wl_output::WlOutput>) {
         let surface = self.compositor.create_surface(qh);
         let layer = self.layer_shell.create_layer_surface(
@@ -177,19 +236,24 @@ impl OverlayState {
     }
 
     fn resize_for_text(&mut self, text: &str) -> bool {
-        let text_w = if let Some(sw) = self.renderer.as_any_mut().downcast_mut::<renderer::software::SoftwareRenderer>() {
-            sw.measure_text_width(text)
-        } else {
-            #[cfg(feature = "vello-renderer")]
-            {
-                if let Some(vr) = self.renderer.as_any_mut().downcast_mut::<renderer::vello::VelloRenderer>() {
-                    vr.measure_text_width(text)
+        let text_w = match self.renderer.as_mut() {
+            Some(r) => {
+                if let Some(sw) = r.as_any_mut().downcast_mut::<renderer::software::SoftwareRenderer>() {
+                    sw.measure_text_width(text)
                 } else {
-                    200.0
+                    #[cfg(feature = "vello-renderer")]
+                    {
+                        if let Some(vr) = r.as_any_mut().downcast_mut::<renderer::vello::VelloRenderer>() {
+                            vr.measure_text_width(text)
+                        } else {
+                            200.0
+                        }
+                    }
+                    #[cfg(not(feature = "vello-renderer"))]
+                    { 200.0 }
                 }
             }
-            #[cfg(not(feature = "vello-renderer"))]
-            { 200.0 }
+            None => 200.0,
         };
         let content_pad = (BORDER_WIDTH + 10.0) * 2.0 + 20.0;
         let target_w = (text_w + content_pad).max(OVERLAY_WIDTH as f32).min(OVERLAY_MAX_WIDTH as f32) as u32;
@@ -197,7 +261,9 @@ impl OverlayState {
             self.width = target_w;
             let phys_w = target_w * self.scale_factor as u32;
             let phys_h = OVERLAY_HEIGHT * self.scale_factor as u32;
-            self.renderer.resize(phys_w, phys_h, self.scale_factor);
+            if let Some(r) = self.renderer.as_mut() {
+                r.resize(phys_w, phys_h, self.scale_factor);
+            }
             self.layer.set_size(target_w, OVERLAY_HEIGHT);
             self.layer.commit();
             true
@@ -211,7 +277,9 @@ impl OverlayState {
             self.width = OVERLAY_WIDTH;
             let phys_w = OVERLAY_WIDTH * self.scale_factor as u32;
             let phys_h = OVERLAY_HEIGHT * self.scale_factor as u32;
-            self.renderer.resize(phys_w, phys_h, self.scale_factor);
+            if let Some(r) = self.renderer.as_mut() {
+                r.resize(phys_w, phys_h, self.scale_factor);
+            }
             self.layer.set_size(OVERLAY_WIDTH, OVERLAY_HEIGHT);
             self.layer.commit();
         }
@@ -270,7 +338,9 @@ impl OverlayState {
         };
 
         self.layer.wl_surface().set_buffer_scale(self.scale_factor);
-        self.renderer.draw(&draw_state, &self.layer, qh);
+        if let Some(r) = self.renderer.as_mut() {
+            r.draw(&draw_state, &self.layer, qh);
+        }
         self.need_redraw = false;
 
         if self.visible && (self.countdown_start.is_some() || self.fade_start.is_some()) {
@@ -282,6 +352,7 @@ impl OverlayState {
         while let Ok(cmd) = self.cmd_rx.try_recv() {
             match cmd {
                 OverlayCommand::Show => {
+                    self.ensure_renderer();
                     self.visible = true;
                     self.is_error = false;
                     self.display_text.clear();
@@ -377,7 +448,18 @@ fn run_overlay(
     alive: Arc<AtomicBool>,
     renderer_type: OverlayRendererType,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let conn = Connection::connect_to_env()?;
+    let conn = loop {
+        match Connection::connect_to_env() {
+            Ok(c) => break c,
+            Err(e) => {
+                if cmd_rx.try_recv().is_ok_and(|c| matches!(c, OverlayCommand::Quit)) {
+                    return Ok(());
+                }
+                info!("overlay: Wayland compositor not ready, retrying in 1s... ({e})");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+    };
     let (globals, mut event_queue) = wayland_client::globals::registry_queue_init::<OverlayState>(&conn)?;
     let qh = event_queue.handle();
 
@@ -405,38 +487,7 @@ fn run_overlay(
     layer.set_margin(OVERLAY_BOTTOM_MARGIN, 0, OVERLAY_BOTTOM_MARGIN, 0);
     layer.commit();
 
-    let pool = SlotPool::new(OVERLAY_MAX_WIDTH as usize * 2 * OVERLAY_HEIGHT as usize * 2 * 4, &shm)?;
-
-    let renderer: Box<dyn OverlayRenderer> = match renderer_type {
-        OverlayRendererType::Vello => {
-            #[cfg(feature = "vello-renderer")]
-            {
-                match renderer::vello::VelloRenderer::new(pool, OVERLAY_WIDTH, OVERLAY_HEIGHT) {
-                    Ok(r) => {
-                        info!("overlay: using Vello renderer (experimental)");
-                        Box::new(r)
-                    }
-                    Err(e) => {
-                        warn!("overlay: Vello init failed ({e}), falling back to software");
-                        let fallback_pool = SlotPool::new(
-                            OVERLAY_MAX_WIDTH as usize * 2 * OVERLAY_HEIGHT as usize * 2 * 4, &shm,
-                        )?;
-                        Box::new(renderer::software::SoftwareRenderer::new(
-                            fallback_pool, OVERLAY_WIDTH, OVERLAY_HEIGHT,
-                        ))
-                    }
-                }
-            }
-            #[cfg(not(feature = "vello-renderer"))]
-            {
-                warn!("overlay: Vello renderer requested but not compiled, falling back to software");
-                Box::new(renderer::software::SoftwareRenderer::new(pool, OVERLAY_WIDTH, OVERLAY_HEIGHT))
-            }
-        }
-        OverlayRendererType::Software => {
-            Box::new(renderer::software::SoftwareRenderer::new(pool, OVERLAY_WIDTH, OVERLAY_HEIGHT))
-        }
-    };
+    info!("overlay: renderer deferred (type={renderer_type:?}), will init on first Show");
 
     let mut state = OverlayState {
         registry_state: RegistryState::new(&globals),
@@ -465,7 +516,8 @@ fn run_overlay(
         fade_alpha: 0.0,
         fade_target: 0.0,
         fade_start: None,
-        renderer,
+        renderer: None,
+        renderer_type,
     };
 
     info!("overlay: wayland layer-shell initialized ({OVERLAY_WIDTH}x{OVERLAY_HEIGHT}, margin bottom {OVERLAY_BOTTOM_MARGIN})");
