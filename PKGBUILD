@@ -1,12 +1,12 @@
 # Maintainer: DonKongPaPa
 pkgname=fcitx5-glm-asr
 pkgver=0.1.2
-pkgrel=1
+pkgrel=2
 pkgdesc="Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon"
 arch=('x86_64')
 url="https://github.com/DonKongPaPa/fcitx5-glm-asr"
 license=('MIT')
-depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland' 'vulkan-icd-loader')
+depends=('fcitx5' 'pipewire' 'gcc-libs' 'wayland' 'vulkan-icd-loader' 'alsa-lib')
 makedepends=('rust' 'cargo' 'cmake' 'extra-cmake-modules' 'pkgconf' 'wayland-protocols' 'git')
 source=("git+${url}.git#tag=v$pkgver")
 sha256sums=('SKIP')
@@ -20,7 +20,10 @@ build() {
     cd "$srcdir/$pkgname"
 
     cd daemon
-    cargo build --release --locked --features vello-renderer
+    _cargo_cflags="${CFLAGS//-flto=auto/}"
+    _cargo_ldflags="${LDFLAGS//-flto=auto/}"
+    CFLAGS="$_cargo_cflags" LDFLAGS="$_cargo_ldflags" \
+        cargo build --release --locked --features vello-renderer
     cd ..
 
     mkdir -p build
