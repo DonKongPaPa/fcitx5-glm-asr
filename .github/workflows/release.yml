@@ -298,6 +298,9 @@ jobs:
       - name: List artifacts
         run: ls -lh artifacts/
 
+      - name: List artifacts
+        run: find artifacts/ -type f
+
       - name: Create GitHub Release
         run: |
           VERSION=${GITHUB_REF_NAME#v}
@@ -305,9 +308,6 @@ jobs:
             --title "v${VERSION}" \
             --latest \
             --generate-notes \
-            artifacts/*.pkg.tar.zst \
-            artifacts/*.deb \
-            artifacts/*.rpm \
-            artifacts/*.tar.gz
+            artifacts/**/*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
