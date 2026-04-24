@@ -59,19 +59,19 @@ jobs:
             libpipewire-0.3-dev libvulkan-dev ruby ruby-dev
           apt-get clean && rm -rf /var/lib/apt/lists/*
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install rustup
         run: |
           curl -L -o /tmp/rustup-init https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
           chmod +x /tmp/rustup-init
           /tmp/rustup-init -y
           rm /tmp/rustup-init
-          echo "/root/.cargo/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install fpm
         run: gem install fpm
-
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Build daemon
         run: |
@@ -96,8 +96,8 @@ jobs:
 
           install -Dm755 daemon/target/release/glm-asrd /tmp/deb-staging/usr/bin/glm-asrd
           install -Dm644 data/glm-asrd.service /tmp/deb-staging/usr/lib/systemd/user/glm-asrd.service
-          install -Dm755 build/glm-asr.so /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5/glm-asr.so
-          install -Dm644 build/glm-asr.conf /tmp/deb-staging/usr/share/fcitx5/addon/glm-asr.conf
+          install -Dm755 build/plugin/glm-asr.so /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5/glm-asr.so
+          install -Dm644 build/plugin/glm-asr.conf /tmp/deb-staging/usr/share/fcitx5/addon/glm-asr.conf
           install -Dm644 LICENSE /tmp/deb-staging/usr/share/licenses/fcitx5-glm-asr/LICENSE
 
           fpm -s dir -t deb \
@@ -135,19 +135,19 @@ jobs:
             pipewire-devel vulkan-loader-devel ruby-devel redhat-rpm-config
           dnf clean all
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install rustup
         run: |
           curl -L -o /tmp/rustup-init https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
           chmod +x /tmp/rustup-init
           /tmp/rustup-init -y
           rm /tmp/rustup-init
-          echo "/root/.cargo/bin" >> $GITHUB_PATH
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install fpm
         run: gem install fpm
-
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Build daemon
         run: |
@@ -171,8 +171,8 @@ jobs:
 
           install -Dm755 daemon/target/release/glm-asrd /tmp/rpm-staging/usr/bin/glm-asrd
           install -Dm644 data/glm-asrd.service /tmp/rpm-staging/usr/lib/systemd/user/glm-asrd.service
-          install -Dm755 build/glm-asr.so /tmp/rpm-staging/usr/lib64/fcitx5/glm-asr.so
-          install -Dm644 build/glm-asr.conf /tmp/rpm-staging/usr/share/fcitx5/addon/glm-asr.conf
+          install -Dm755 build/plugin/glm-asr.so /tmp/rpm-staging/usr/lib64/fcitx5/glm-asr.so
+          install -Dm644 build/plugin/glm-asr.conf /tmp/rpm-staging/usr/share/fcitx5/addon/glm-asr.conf
           install -Dm644 LICENSE /tmp/rpm-staging/usr/share/licenses/fcitx5-glm-asr/LICENSE
 
           fpm -s dir -t rpm \
@@ -228,8 +228,8 @@ jobs:
 
           mkdir -p "${STAGING}"
           install -Dm755 daemon/target/release/glm-asrd "${STAGING}/glm-asrd"
-          install -Dm755 build/glm-asr.so "${STAGING}/glm-asr.so"
-          install -Dm644 build/glm-asr.conf "${STAGING}/glm-asr.conf"
+          install -Dm755 build/plugin/glm-asr.so "${STAGING}/glm-asr.so"
+          install -Dm644 build/plugin/glm-asr.conf "${STAGING}/glm-asr.conf"
           install -Dm644 data/glm-asrd.service "${STAGING}/glm-asrd.service"
           install -Dm644 LICENSE "${STAGING}/LICENSE"
 
