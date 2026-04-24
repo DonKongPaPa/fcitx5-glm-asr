@@ -175,6 +175,8 @@ impl LayerShellHandler for OverlayState {
         self.width = NonZeroU32::new(configure.new_size.0).map_or(OVERLAY_WIDTH, NonZeroU32::get);
         self.height = NonZeroU32::new(configure.new_size.1).map_or(OVERLAY_HEIGHT, NonZeroU32::get);
         self.configured = true;
+        self.layer_created = None;
+        self.layer_create_retries = 0;
         self.need_redraw = true;
         let phys_w = self.width * self.scale_factor as u32;
         let phys_h = self.height * self.scale_factor as u32;

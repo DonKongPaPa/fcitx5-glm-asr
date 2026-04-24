@@ -15,3 +15,4 @@ src/
 pkg/
 *.pkg.tar.zst
 fcitx5-glm-asr/
+glm-asr-typer/

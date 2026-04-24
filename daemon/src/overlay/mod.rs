@@ -88,6 +88,8 @@ pub(crate) struct OverlayState {
     fade_start: Option<std::time::Instant>,
     renderer: Option<Box<dyn OverlayRenderer>>,
     renderer_type: OverlayRendererType,
+    layer_created: Option<std::time::Instant>,
+    layer_create_retries: u32,
 }
 
 impl ProvidesRegistryState for OverlayState {
@@ -174,6 +176,8 @@ impl OverlayState {
         self.layer = layer;
         self.layer_output = output.cloned();
         self.configured = false;
+        self.layer_created = Some(std::time::Instant::now());
+        info!("overlay: layer surface created, waiting for configure");
     }
 
     fn ensure_output(&mut self, qh: &QueueHandle<Self>) {
@@ -518,6 +522,8 @@ fn run_overlay(
         fade_start: None,
         renderer: None,
         renderer_type,
+        layer_created: Some(std::time::Instant::now()),
+        layer_create_retries: 0,
     };
 
     info!("overlay: wayland layer-shell initialized ({OVERLAY_WIDTH}x{OVERLAY_HEIGHT}, margin bottom {OVERLAY_BOTTOM_MARGIN})");
@@ -535,6 +541,18 @@ fn run_overlay(
 
         if state.exit {
             break;
+        }
+
+        if let Some(created) = state.layer_created {
+            if !state.configured && created.elapsed() > std::time::Duration::from_secs(5) {
+                state.layer_create_retries += 1;
+                warn!(
+                    "overlay: no configure event after 5s, recreating layer (attempt {})",
+                    state.layer_create_retries
+                );
+                let output = state.layer_output.clone();
+                state.create_layer(&qh, output.as_ref());
+            }
         }
 
         if state.visible && state.countdown_start.is_some() && state.display_text.is_empty() {
