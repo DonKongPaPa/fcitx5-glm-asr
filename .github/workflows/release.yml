@@ -132,7 +132,7 @@ jobs:
             gcc gcc-c++ make cmake extra-cmake-modules pkgconf-pkg-config \
             wayland-protocols-devel git ca-certificates curl \
             fcitx5-devel alsa-lib-devel wayland-devel libxkbcommon-devel \
-            pipewire-devel vulkan-loader-devel ruby-devel redhat-rpm-config
+            pipewire-devel vulkan-loader-devel ruby-devel redhat-rpm-config rpm-build
           dnf clean all
 
       - name: Checkout
