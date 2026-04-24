@@ -1,0 +1,317 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  BINARY_NAME: glm-asrd
+  LIB_NAME: glm-asr.so
+
+jobs:
+  build-arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel rust cargo cmake extra-cmake-modules pkgconf wayland-protocols git fcitx5 pipewire gcc-libs wayland vulkan-icd-loader alsa-lib
+          pacman -Sc --noconfirm
+
+      - name: Create builder user
+        run: |
+          useradd -m -G wheel builder
+          sed -i 's/^# %wheel ALL=(ALL:ALL) NOPASSWD: ALL/%wheel ALL=(ALL:ALL) NOPASSWD: ALL/' /etc/sudoers
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fix ownership
+        run: chown -R builder:builder .
+
+      - name: Build with makepkg
+        run: |
+          su - builder -c "cd /__w/fcitx5-glm-asr/fcitx5-glm-asr && makepkg -sf --noconfirm"
+        env:
+          PKGDEST: /tmp
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package
+          path: /tmp/fcitx5-glm-asr-*-x86_64.pkg.tar.zst
+
+  build-debian:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential cmake extra-cmake-modules pkg-config \
+            wayland-protocols git ca-certificates curl \
+            libfcitx5core-dev libfcitx5config-dev libfcitx5utils-dev \
+            libasound2-dev libwayland-dev libxkbcommon-dev \
+            libpipewire-0.3-dev libvulkan-dev ruby ruby-dev
+          apt-get clean && rm -rf /var/lib/apt/lists/*
+
+      - name: Install rustup
+        run: |
+          curl -L -o /tmp/rustup-init https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y
+          rm /tmp/rustup-init
+        env:
+          PATH: "/root/.cargo/bin:${PATH}"
+
+      - name: Install fpm
+        run: gem install fpm
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build daemon
+        run: |
+          cd daemon
+          /root/.cargo/bin/cargo build --release --locked --features vello-renderer
+
+      - name: Build plugin
+        run: |
+          mkdir -p build
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          make -C build
+
+      - name: Package .deb
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p /tmp/deb-staging/usr/bin
+          mkdir -p /tmp/deb-staging/usr/lib/systemd/user
+          mkdir -p /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5
+          mkdir -p /tmp/deb-staging/usr/share/fcitx5/addon
+          mkdir -p /tmp/deb-staging/usr/share/doc/fcitx5-glm-asr
+          mkdir -p /tmp/deb-staging/usr/share/licenses/fcitx5-glm-asr
+
+          install -Dm755 daemon/target/release/glm-asrd /tmp/deb-staging/usr/bin/glm-asrd
+          install -Dm644 data/glm-asrd.service /tmp/deb-staging/usr/lib/systemd/user/glm-asrd.service
+          install -Dm755 build/libglm-asr.so /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5/libglm-asr.so
+          install -Dm644 build/glm-asr.conf /tmp/deb-staging/usr/share/fcitx5/addon/glm-asr.conf
+          install -Dm644 LICENSE /tmp/deb-staging/usr/share/licenses/fcitx5-glm-asr/LICENSE
+
+          fpm -s dir -t deb \
+            -n fcitx5-glm-asr \
+            -v "${VERSION}" \
+            --architecture amd64 \
+            --description "Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon" \
+            --url "https://github.com/DonKongPaPa/fcitx5-glm-asr" \
+            --license MIT \
+            --depends fcitx5 \
+            --depends libasound2t64 \
+            --depends libwayland-client0 \
+            --depends libvulkan1 \
+            -C /tmp/deb-staging \
+            usr
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-package
+          path: "*.deb"
+
+  build-fedora:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+    steps:
+      - name: Install build dependencies
+        run: |
+          rm -f /etc/yum.repos.d/fedora-cisco-openh264.repo || true
+          dnf install -y \
+            gcc gcc-c++ make cmake extra-cmake-modules pkgconf-pkg-config \
+            wayland-protocols-devel git ca-certificates curl \
+            fcitx5-devel alsa-lib-devel wayland-devel libxkbcommon-devel \
+            pipewire-devel vulkan-loader-devel ruby-devel redhat-rpm-config
+          dnf clean all
+
+      - name: Install rustup
+        run: |
+          curl -L -o /tmp/rustup-init https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y
+          rm /tmp/rustup-init
+
+      - name: Install fpm
+        run: gem install fpm
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build daemon
+        run: |
+          cd daemon
+          /root/.cargo/bin/cargo build --release --locked --features vello-renderer
+
+      - name: Build plugin
+        run: |
+          mkdir -p build
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          make -C build
+
+      - name: Package .rpm
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p /tmp/rpm-staging/usr/bin
+          mkdir -p /tmp/rpm-staging/usr/lib/systemd/user
+          mkdir -p /tmp/rpm-staging/usr/lib64/fcitx5
+          mkdir -p /tmp/rpm-staging/usr/share/fcitx5/addon
+          mkdir -p /tmp/rpm-staging/usr/share/licenses/fcitx5-glm-asr
+
+          install -Dm755 daemon/target/release/glm-asrd /tmp/rpm-staging/usr/bin/glm-asrd
+          install -Dm644 data/glm-asrd.service /tmp/rpm-staging/usr/lib/systemd/user/glm-asrd.service
+          install -Dm755 build/libglm-asr.so /tmp/rpm-staging/usr/lib64/fcitx5/libglm-asr.so
+          install -Dm644 build/glm-asr.conf /tmp/rpm-staging/usr/share/fcitx5/addon/glm-asr.conf
+          install -Dm644 LICENSE /tmp/rpm-staging/usr/share/licenses/fcitx5-glm-asr/LICENSE
+
+          fpm -s dir -t rpm \
+            -n fcitx5-glm-asr \
+            -v "${VERSION}" \
+            --iteration 1 \
+            --architecture x86_64 \
+            --description "Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon" \
+            --url "https://github.com/DonKongPaPa/fcitx5-glm-asr" \
+            --license MIT \
+            --depends fcitx5 \
+            --depends alsa-lib \
+            --depends wayland \
+            --depends vulkan-loader \
+            -C /tmp/rpm-staging \
+            usr
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fedora-package
+          path: "*.rpm"
+
+  build-tarball:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel rust cargo cmake extra-cmake-modules pkgconf wayland-protocols git fcitx5 pipewire gcc-libs wayland vulkan-icd-loader alsa-lib
+          pacman -Sc --noconfirm
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build daemon
+        run: |
+          cd daemon
+          cargo build --release --locked --features vello-renderer
+
+      - name: Build plugin
+        run: |
+          mkdir -p build
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+          make -C build
+
+      - name: Create tarball
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          STAGING="fcitx5-glm-asr-${VERSION}"
+
+          mkdir -p "${STAGING}"
+          install -Dm755 daemon/target/release/glm-asrd "${STAGING}/glm-asrd"
+          install -Dm755 build/libglm-asr.so "${STAGING}/libglm-asr.so"
+          install -Dm644 build/glm-asr.conf "${STAGING}/glm-asr.conf"
+          install -Dm644 data/glm-asrd.service "${STAGING}/glm-asrd.service"
+          install -Dm644 LICENSE "${STAGING}/LICENSE"
+
+          cat > "${STAGING}/install.sh" << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          PREFIX="${1:-/usr}"
+          LIBDIR="${PREFIX}/lib/fcitx5"
+          ADDONDIR="${PREFIX}/share/fcitx5/addon"
+          SYSTEMD_DIR="${PREFIX}/lib/systemd/user"
+
+          if [ "$(id -u)" -ne 0 ]; then
+              echo "Run with sudo: sudo ./install.sh [/usr]"
+              exit 1
+          fi
+
+          install -Dm755 glm-asrd "${PREFIX}/bin/glm-asrd"
+          install -Dm755 libglm-asr.so "${LIBDIR}/libglm-asr.so"
+          install -Dm644 glm-asr.conf "${ADDONDIR}/glm-asr.conf"
+          install -Dm644 glm-asrd.service "${SYSTEMD_DIR}/glm-asrd.service"
+
+          echo "Installed. Run: systemctl --user daemon-reload && systemctl --user enable --now glm-asrd.service"
+          SCRIPT
+          chmod +x "${STAGING}/install.sh"
+
+          cat > "${STAGING}/uninstall.sh" << 'SCRIPT'
+          #!/bin/bash
+          set -e
+          PREFIX="${1:-/usr}"
+          LIBDIR="${PREFIX}/lib/fcitx5"
+          ADDONDIR="${PREFIX}/share/fcitx5/addon"
+          SYSTEMD_DIR="${PREFIX}/lib/systemd/user"
+
+          if [ "$(id -u)" -ne 0 ]; then
+              echo "Run with sudo: sudo ./uninstall.sh [/usr]"
+              exit 1
+          fi
+
+          rm -f "${PREFIX}/bin/glm-asrd"
+          rm -f "${LIBDIR}/libglm-asr.so"
+          rm -f "${ADDONDIR}/glm-asr.conf"
+          rm -f "${SYSTEMD_DIR}/glm-asrd.service"
+
+          echo "Uninstalled."
+          SCRIPT
+          chmod +x "${STAGING}/uninstall.sh"
+
+          tar czf "fcitx5-glm-asr-${VERSION}-linux-x86_64.tar.gz" "${STAGING}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: "fcitx5-glm-asr-*-linux-x86_64.tar.gz"
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-arch, build-debian, build-fedora, build-tarball]
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create GitHub Release
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "v${VERSION}" \
+            --latest \
+            --generate-notes \
+            artifacts/*.pkg.tar.zst \
+            artifacts/*.deb \
+            artifacts/*.rpm \
+            artifacts/*.tar.gz
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
