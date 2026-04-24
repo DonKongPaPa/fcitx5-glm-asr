@@ -8,10 +8,6 @@ on:
 permissions:
   contents: write
 
-env:
-  BINARY_NAME: glm-asrd
-  LIB_NAME: glm-asr.so
-
 jobs:
   build-arch:
     runs-on: ubuntu-latest
@@ -69,8 +65,7 @@ jobs:
           chmod +x /tmp/rustup-init
           /tmp/rustup-init -y
           rm /tmp/rustup-init
-        env:
-          PATH: "/root/.cargo/bin:${PATH}"
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install fpm
         run: gem install fpm
@@ -81,7 +76,7 @@ jobs:
       - name: Build daemon
         run: |
           cd daemon
-          /root/.cargo/bin/cargo build --release --locked --features vello-renderer
+          cargo build --release --locked --features vello-renderer
 
       - name: Build plugin
         run: |
@@ -101,7 +96,7 @@ jobs:
 
           install -Dm755 daemon/target/release/glm-asrd /tmp/deb-staging/usr/bin/glm-asrd
           install -Dm644 data/glm-asrd.service /tmp/deb-staging/usr/lib/systemd/user/glm-asrd.service
-          install -Dm755 build/libglm-asr.so /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5/libglm-asr.so
+          install -Dm755 build/glm-asr.so /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5/glm-asr.so
           install -Dm644 build/glm-asr.conf /tmp/deb-staging/usr/share/fcitx5/addon/glm-asr.conf
           install -Dm644 LICENSE /tmp/deb-staging/usr/share/licenses/fcitx5-glm-asr/LICENSE
 
@@ -146,6 +141,7 @@ jobs:
           chmod +x /tmp/rustup-init
           /tmp/rustup-init -y
           rm /tmp/rustup-init
+          echo "/root/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install fpm
         run: gem install fpm
@@ -156,7 +152,7 @@ jobs:
       - name: Build daemon
         run: |
           cd daemon
-          /root/.cargo/bin/cargo build --release --locked --features vello-renderer
+          cargo build --release --locked --features vello-renderer
 
       - name: Build plugin
         run: |
@@ -175,7 +171,7 @@ jobs:
 
           install -Dm755 daemon/target/release/glm-asrd /tmp/rpm-staging/usr/bin/glm-asrd
           install -Dm644 data/glm-asrd.service /tmp/rpm-staging/usr/lib/systemd/user/glm-asrd.service
-          install -Dm755 build/libglm-asr.so /tmp/rpm-staging/usr/lib64/fcitx5/libglm-asr.so
+          install -Dm755 build/glm-asr.so /tmp/rpm-staging/usr/lib64/fcitx5/glm-asr.so
           install -Dm644 build/glm-asr.conf /tmp/rpm-staging/usr/share/fcitx5/addon/glm-asr.conf
           install -Dm644 LICENSE /tmp/rpm-staging/usr/share/licenses/fcitx5-glm-asr/LICENSE
 
@@ -232,12 +228,12 @@ jobs:
 
           mkdir -p "${STAGING}"
           install -Dm755 daemon/target/release/glm-asrd "${STAGING}/glm-asrd"
-          install -Dm755 build/libglm-asr.so "${STAGING}/libglm-asr.so"
+          install -Dm755 build/glm-asr.so "${STAGING}/glm-asr.so"
           install -Dm644 build/glm-asr.conf "${STAGING}/glm-asr.conf"
           install -Dm644 data/glm-asrd.service "${STAGING}/glm-asrd.service"
           install -Dm644 LICENSE "${STAGING}/LICENSE"
 
-          cat > "${STAGING}/install.sh" << 'SCRIPT'
+          cat > "${STAGING}/install.sh" << 'INSTALL_EOF'
           #!/bin/bash
           set -e
           PREFIX="${1:-/usr}"
@@ -251,15 +247,15 @@ jobs:
           fi
 
           install -Dm755 glm-asrd "${PREFIX}/bin/glm-asrd"
-          install -Dm755 libglm-asr.so "${LIBDIR}/libglm-asr.so"
+          install -Dm755 glm-asr.so "${LIBDIR}/glm-asr.so"
           install -Dm644 glm-asr.conf "${ADDONDIR}/glm-asr.conf"
           install -Dm644 glm-asrd.service "${SYSTEMD_DIR}/glm-asrd.service"
 
           echo "Installed. Run: systemctl --user daemon-reload && systemctl --user enable --now glm-asrd.service"
-          SCRIPT
+          INSTALL_EOF
           chmod +x "${STAGING}/install.sh"
 
-          cat > "${STAGING}/uninstall.sh" << 'SCRIPT'
+          cat > "${STAGING}/uninstall.sh" << 'UNINSTALL_EOF'
           #!/bin/bash
           set -e
           PREFIX="${1:-/usr}"
@@ -273,12 +269,12 @@ jobs:
           fi
 
           rm -f "${PREFIX}/bin/glm-asrd"
-          rm -f "${LIBDIR}/libglm-asr.so"
+          rm -f "${LIBDIR}/glm-asr.so"
           rm -f "${ADDONDIR}/glm-asr.conf"
           rm -f "${SYSTEMD_DIR}/glm-asrd.service"
 
           echo "Uninstalled."
-          SCRIPT
+          UNINSTALL_EOF
           chmod +x "${STAGING}/uninstall.sh"
 
           tar czf "fcitx5-glm-asr-${VERSION}-linux-x86_64.tar.gz" "${STAGING}"

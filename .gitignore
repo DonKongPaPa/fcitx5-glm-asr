@@ -11,3 +11,6 @@ daemon/target/
 .DS_Store
 opencode.jsonc
 .opencode/
+src/
+pkg/
+*.pkg.tar.zst
