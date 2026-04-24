@@ -33,9 +33,7 @@ jobs:
 
       - name: Build with makepkg
         run: |
-          su - builder -c "cd /__w/fcitx5-glm-asr/fcitx5-glm-asr && makepkg -sf --noconfirm"
-        env:
-          PKGDEST: /tmp
+          su - builder -c "export PKGDEST=/tmp && cd /__w/fcitx5-glm-asr/fcitx5-glm-asr && makepkg -sf --noconfirm"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -298,9 +296,6 @@ jobs:
       - name: List artifacts
         run: ls -lh artifacts/
 
-      - name: List artifacts
-        run: find artifacts/ -type f
-
       - name: Create GitHub Release
         run: |
           VERSION=${GITHUB_REF_NAME#v}
@@ -308,6 +303,6 @@ jobs:
             --title "v${VERSION}" \
             --latest \
             --generate-notes \
-            artifacts/**/*
+            artifacts/*
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
