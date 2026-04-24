@@ -1,20 +1,20 @@
 # fcitx5-glm-asr
 
-基于智谱 GLM ASR 的 Linux 语音输入 fcitx5 插件。
+An fcitx5 plugin for voice typing using ZhiPu GLM ASR.
 
-长按快捷键（默认右 Ctrl）录音，松开后自动识别并输入文字。
+Press and hold a hotkey (default: Right Ctrl) to record, release to transcribe and type.
 
-## 功能
+## Features
 
-- 长按快捷键（默认右 Ctrl）录音，松开识别（支持长按/切换两种模式）
-- **Overlay 实时反馈**：录音时显示进度环、倒计时、波形可视化；识别完成后显示结果文字
-- **波形可视化**：基于峰值包络的实时波形，自动归一化 + 时间平滑，直观展示说话状态
-- **双渲染后端**：Software（CPU）和 Vello（GPU 实验性），可通过 fcitx5-configtool 运行时切换，无需重启
-- 候选框状态反馈（关闭 overlay 时的回退方案）
-- fcitx5-configtool 图形化配置（API Key、模型、采样率、快捷键、渲染器等）
-- 多显示器支持（自动跟随当前活跃显示器显示 overlay）
+- Press-and-hold hotkey (default Right Ctrl) to record, release to transcribe (supports Hold and Toggle modes)
+- **Overlay real-time feedback**: progress ring, countdown, waveform visualization during recording; result text displayed after recognition
+- **Waveform visualization**: peak-envelope-based real-time waveform with auto-normalization + temporal smoothing
+- **Dual rendering backends**: Software (CPU) and Vello (GPU, experimental), switchable at runtime via fcitx5-configtool without restart
+- Candidate window status feedback (fallback when overlay is disabled)
+- GUI configuration via `fcitx5-configtool` (API Key, model, sample rate, hotkey, renderer, etc.)
+- Multi-monitor support (overlay follows the active display)
 
-## 快速开始（Arch Linux）
+## Quick Start (Arch Linux)
 
 ```bash
 git clone https://github.com/DonKongPaPa/fcitx5-glm-asr.git
@@ -22,49 +22,49 @@ cd fcitx5-glm-asr
 makepkg -si
 ```
 
-其他平台安装方式见 [INSTALL.md](INSTALL.md)。
+For other platforms, see [INSTALL.md](INSTALL.md).
 
-## 前置依赖
+## Requirements
 
-- **Linux x86_64** + **Wayland** 会话
+- **Linux x86_64** + **Wayland** session
 - **fcitx5 >= 5.1**
-- **PipeWire**（录音后端）
-- **ALSA**（音频输入，通常已随系统安装）
-- **Wayland compositor 需支持 `wlr-layer-shell-unstable-v1` 协议**（overlay 显示必需）
-  - KDE Plasma 6（KWin）
-  - Sway / Hyprland / wlroots 系
-  - GNOME (Mutter) — 不支持 layer-shell，需在配置中关闭 Use Overlay，改用候选框反馈
-- 网络连接（调用 GLM ASR API）
+- **PipeWire** (audio recording backend)
+- **ALSA** (audio input, usually pre-installed)
+- **Wayland compositor with `wlr-layer-shell-unstable-v1` protocol support** (required for overlay)
+  - KDE Plasma 6 (KWin)
+  - Sway / Hyprland / wlroots-based compositors
+  - GNOME (Mutter) — does not support layer-shell; disable Use Overlay and use candidate window instead
+- Network connection (to call GLM ASR API)
 
-## 配置
+## Configuration
 
-使用 `fcitx5-configtool` 打开插件管理，找到 **GLM ASR**，配置以下参数：
+Open `fcitx5-configtool`, find **GLM ASR** in the addon manager, and configure:
 
-- **API Key** — 智谱开放平台 API Key（必填）
-- **Model** — ASR 模型名称（默认 `glm-asr-2512`）
-- **API URL** — API 端点地址（默认 `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`，一般无需修改）
-- **Sample Rate** — 录音采样率（默认 16000 Hz）
-- **Trigger Key** — 触发快捷键（默认右 Ctrl）
-- **Trigger Mode** — 触发模式：长按（Hold）或 按下切换（Toggle）
-- **Use Overlay** — 启用 overlay 实时反馈（默认开启）。关闭后回退到 fcitx5 候选框显示状态
-- **Overlay Renderer** — Overlay 渲染后端（默认 Software）
-  - `Software` — CPU 渲染，无额外依赖
-  - `Vello (Experimental)` — GPU 渲染（需要 Vulkan 兼容 GPU），编译时需启用 `vello-renderer` feature
+- **API Key** — ZhiPu Open Platform API key (required)
+- **Model** — ASR model name (default: `glm-asr-2512`)
+- **API URL** — API endpoint (default: `https://open.bigmodel.cn/api/paas/v4/audio/transcriptions`, usually no need to change)
+- **Sample Rate** — Recording sample rate (default: 16000 Hz)
+- **Trigger Key** — Hotkey to trigger recording (default: Right Ctrl)
+- **Trigger Mode** — Trigger mode: Hold (press and hold) or Toggle (press to start/stop)
+- **Use Overlay** — Enable overlay real-time feedback (default: on). Falls back to fcitx5 candidate window when disabled
+- **Overlay Renderer** — Overlay rendering backend (default: Software)
+  - `Software` — CPU rendering, no extra dependencies
+  - `Vello (Experimental)` — GPU rendering (requires Vulkan-compatible GPU), compile with `--features vello-renderer`
 
-## 多显示器说明
+## Multi-Monitor Notes
 
-overlay 在所有支持 layer-shell 的 compositor（KDE Plasma 6、Sway、Hyprland 等）上均可正常使用。
+The overlay works on all compositors supporting layer-shell (KDE Plasma 6, Sway, Hyprland, etc.).
 
-其中**自动跟随当前活跃显示器**的功能需要 KDE Plasma 6（通过 D-Bus 查询）。其他桌面环境中 overlay 显示在默认/主显示器上，不影响录音识别功能。
+**Auto-follow active display** requires KDE Plasma 6 (via D-Bus query). On other desktops, the overlay appears on the default/primary monitor. Recording and recognition are not affected.
 
-GNOME (Mutter) 不支持 layer-shell 协议，overlay 无法显示，请在配置中关闭 **Use Overlay** 选项，插件会自动回退到 fcitx5 候选框显示状态。
+GNOME (Mutter) does not support the layer-shell protocol. Disable **Use Overlay** in the configuration and the plugin will fall back to the fcitx5 candidate window.
 
-## 更多文档
+## Documentation
 
-- [安装指南](INSTALL.md) — Arch / Debian / Fedora / 通用 tarball
-- [贡献指南](CONTRIBUTING.md) — 开发环境搭建、Docker 编译验证、提交规范
-- [发版流程](RELEASING.md) — 维护者参考
+- [Installation Guide](INSTALL.md) — Arch / Debian / Fedora / Universal tarball
+- [Contributing Guide](CONTRIBUTING.md) — Dev setup, Docker build verification, commit conventions
+- [Release Process](RELEASING.md) — Maintainer reference
 
-## 许可证
+## License
 
 [MIT](LICENSE)
