@@ -14,3 +14,4 @@ opencode.jsonc
 src/
 pkg/
 *.pkg.tar.zst
+fcitx5-glm-asr/
