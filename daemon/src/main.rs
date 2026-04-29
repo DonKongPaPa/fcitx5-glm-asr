@@ -206,6 +206,13 @@ async fn main() {
                     &hotwords,
                 );
                 *state.asr_client.write().await = new_client;
+                if !params.use_overlay {
+                    if let Ok(guard) = state.overlay.lock() {
+                        if let Some(ref ov) = *guard {
+                            ov.send(overlay::OverlayCommand::Hide);
+                        }
+                    }
+                }
                 if let Ok(mut uo) = state.use_overlay.lock() {
                     *uo = params.use_overlay;
                 }

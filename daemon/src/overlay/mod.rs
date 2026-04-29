@@ -304,6 +304,8 @@ impl OverlayState {
                 self.fade_alpha = self.fade_target;
                 if self.fade_target < 0.5 {
                     self.visible = false;
+                    self.configured = false;
+                    self.layer_output = None;
                     self.volume = 0.0;
                     self.countdown_start = None;
                     self.is_error = false;
