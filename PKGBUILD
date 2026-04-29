@@ -1,6 +1,6 @@
 # Maintainer: DonKongPaPa
 pkgname=fcitx5-glm-asr
-pkgver=0.2.1
+pkgver=0.2.2
 pkgrel=1
 pkgdesc="Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon"
 arch=('x86_64')
