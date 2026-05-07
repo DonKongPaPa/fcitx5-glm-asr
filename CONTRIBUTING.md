@@ -34,11 +34,30 @@ sudo dnf install \
 
 ### Building
 
-```bash
-# Build daemon (Software renderer, default)
-cd daemon && cargo build --release --locked
+#### Quick Start (Makefile)
 
-# Build daemon (with Vello GPU renderer, experimental)
+```bash
+make dev                        # Build + install everything (incremental)
+make restart                    # Build + install + restart fcitx5 + glm-asrd
+make daemon                     # Build Rust daemon only
+make plugin                     # Build C++ plugin only
+make dev BUILD_TYPE=debug       # Debug build
+make uninstall-dev              # Remove dev plugin, revert to system package
+make clean                      # Remove build artifacts
+```
+
+The Makefile installs:
+- Daemon binaries (`glm-asrd`, `glm-asr-overlay`) to `/usr/bin/` (requires sudo)
+- Plugin (`glm-asr.so`) to `~/.local/lib/fcitx5/` (user-level, no sudo)
+- Addon config (`glm-asr.conf`) to `~/.local/share/fcitx5/addon/` (user-level)
+
+User-level plugin overrides the system package, so `make dev` is safe to run
+alongside a `pacman -U` installed version. Use `make uninstall-dev` to revert.
+
+#### Manual Build
+
+```bash
+# Build daemon (with Vello GPU renderer)
 cd daemon && cargo build --release --locked --features vello-renderer
 
 # Build fcitx5 plugin
@@ -50,15 +69,12 @@ make
 ### Local Testing
 
 ```bash
-# Build and install daemon
-cd daemon && cargo build --release --features vello-renderer
-systemctl --user stop glm-asrd.service
-sudo cp target/release/glm-asrd /usr/bin/glm-asrd
-systemctl --user start glm-asrd.service
+# Build, install, and restart everything
+make restart
 
 # Run with mock ASR (no API key needed)
 systemctl --user set-environment GLM_ASR_MOCK=1
-systemctl --user restart glm-asrd.service
+make restart
 
 # Test IPC
 python3 -c "
@@ -155,9 +171,9 @@ Or simply: `fcitx5 -d` (daemonize).
 
 ### Stale `.so` in `~/.local/lib/fcitx5/`
 
-Local user-level plugins override system-level ones. After installing a new
-version, clean up:
+Local user-level plugins override system-level ones. `make dev` automatically
+removes the old `.so` before installing. To revert to the system package:
 
 ```bash
-rm -f ~/.local/lib/fcitx5/glm-asr.so
+make uninstall-dev
 ```
