@@ -365,15 +365,6 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
                 return;
             }
 
-            if (config_.useOverlay.value()) {
-                state_ = State::Idle;
-                commitText(text);
-                clearStatus();
-                currentIc_ = nullptr;
-                resultIc_ = nullptr;
-                return;
-            }
-
             auto candidates = parseCandidates(line);
 
             if (candidates.size() > 1) {
@@ -382,6 +373,15 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
                 state_ = State::Selecting;
                 resultIc_ = currentIc_;
                 showCandidates();
+                return;
+            }
+
+            if (config_.useOverlay.value()) {
+                state_ = State::Idle;
+                commitText(text);
+                clearStatus();
+                currentIc_ = nullptr;
+                resultIc_ = nullptr;
                 return;
             }
 

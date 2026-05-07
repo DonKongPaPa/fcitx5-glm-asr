@@ -344,12 +344,6 @@ async fn main() {
                                 ov.send(overlay::OverlayCommand::SetText(mock_text.to_string()));
                             }
                         }
-                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if use_overlay {
-                            if let Some(ref ov) = *overlay.lock().unwrap() {
-                                ov.send(overlay::OverlayCommand::Hide);
-                            }
-                        }
                         let candidates = vec![
                             CandidateItem {
                                 text: mock_text.to_string(),
@@ -365,6 +359,12 @@ async fn main() {
                             },
                         ];
                         let _ = reply.try_send(IpcResponse::result_with_candidates(candidates));
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        if use_overlay {
+                            if let Some(ref ov) = *overlay.lock().unwrap() {
+                                ov.send(overlay::OverlayCommand::Hide);
+                            }
+                        }
                     });
                 } else {
                     let client = state.asr_client.read().await.clone();
@@ -381,12 +381,6 @@ async fn main() {
                                         }
                                     }
                                 }
-                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                if use_overlay {
-                                    if let Some(ref ov) = *overlay.lock().unwrap() {
-                                        ov.send(overlay::OverlayCommand::Hide);
-                                    }
-                                }
                                 let candidates = vec![
                                     CandidateItem {
                                         text: text.clone(),
@@ -394,6 +388,12 @@ async fn main() {
                                     },
                                 ];
                                 let _ = reply.try_send(IpcResponse::result_with_candidates(candidates));
+                                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                                if use_overlay {
+                                    if let Some(ref ov) = *overlay.lock().unwrap() {
+                                        ov.send(overlay::OverlayCommand::Hide);
+                                    }
+                                }
                             }
                             Err(e) => {
                                 if use_overlay {
@@ -401,13 +401,13 @@ async fn main() {
                                         ov.send(overlay::OverlayCommand::SetError(format!("识别失败: {}", e)));
                                     }
                                 }
+                                let _ = reply.try_send(IpcResponse::error(&format!("ASR failed: {}", e)));
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                 if use_overlay {
                                     if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::Hide);
                                     }
                                 }
-                                let _ = reply.try_send(IpcResponse::error(&format!("ASR failed: {}", e)));
                             }
                         }
                     });
