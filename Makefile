@@ -4,8 +4,8 @@ DAEMON_DIR := daemon
 BUILD_DIR := build
 
 DAEMON_BIN_DIR := /usr/bin
-FCITX5_USER_LIB := $(HOME)/.local/lib/fcitx5
-FCITX5_USER_ADDON := $(HOME)/.local/share/fcitx5/addon
+FCITX5_LIB_DIR := /usr/lib/fcitx5
+FCITX5_ADDON_DIR := /usr/share/fcitx5/addon
 
 ifeq ($(BUILD_TYPE),release)
   CARGO_FLAG := --release
@@ -47,23 +47,22 @@ install-daemon: daemon
 	sudo install -Dm755 $(DAEMON_DIR)/target/$(CARGO_TARGET)/glm-asr-overlay $(DAEMON_BIN_DIR)/glm-asr-overlay
 
 install-plugin: plugin
-	@mkdir -p $(FCITX5_USER_LIB) $(FCITX5_USER_ADDON)
-	rm -f $(FCITX5_USER_LIB)/glm-asr.so
-	install -Dm755 $(BUILD_DIR)/plugin/glm-asr.so $(FCITX5_USER_LIB)/glm-asr.so
-	install -Dm644 $(BUILD_DIR)/plugin/glm-asr.conf $(FCITX5_USER_ADDON)/glm-asr.conf
+	sudo install -Dm755 $(BUILD_DIR)/plugin/glm-asr.so $(FCITX5_LIB_DIR)/glm-asr.so
+	sudo install -Dm644 $(BUILD_DIR)/plugin/glm-asr.conf $(FCITX5_ADDON_DIR)/glm-asr.conf
 
 dev: install-daemon install-plugin
 
 restart: dev
 	systemctl --user restart glm-asrd.service 2>/dev/null || true
-	kill $$(pgrep -f '/usr/bin/fcitx5$$') || true
-	@sleep 5
-	@echo "Done. fcitx5 and glm-asrd restarting..."
+	pkill -x fcitx5 2>/dev/null || true
+	@sleep 1
+	@nohup fcitx5 -d > /dev/null 2>&1 &
+	@echo "Done. fcitx5 and glm-asrd restarted."
 
 uninstall-dev:
-	rm -f $(FCITX5_USER_LIB)/glm-asr.so
-	rm -f $(FCITX5_USER_ADDON)/glm-asr.conf
-	@echo "Dev plugin removed. System package (if any) will be used."
+	sudo rm -f $(FCITX5_LIB_DIR)/glm-asr.so
+	sudo rm -f $(FCITX5_ADDON_DIR)/glm-asr.conf
+	@echo "Dev plugin removed. Reinstall system package to restore: pacman -S fcitx5-glm-asr"
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -14,6 +14,7 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/event.h>
+#include <fcitx/candidatelist.h>
 
 #include <memory>
 #include <string>
@@ -67,6 +68,11 @@ FCITX_CONFIGURATION(
         "UseOverlay",
         "Use Overlay Window",
         true};
+    fcitx::Option<bool> usePreedit{
+        this,
+        "UsePreedit",
+        "Use Preedit (Inline Preview)",
+        true};
     fcitx::OptionWithAnnotation<OverlayRenderer, OverlayRendererI18NAnnotation> overlayRenderer{
         this,
         "OverlayRenderer",
@@ -83,8 +89,15 @@ public:
     const fcitx::Configuration *getConfig() const override;
     void setConfig(const fcitx::RawConfig &config) override;
 
+    void candidateSelected(int index);
+
 private:
-    enum class State { Idle, Armed, Recording, Processing, ResultReady };
+    enum class State { Idle, Armed, Recording, Processing, ResultReady, Selecting };
+
+    struct CandidateSession {
+        std::vector<std::string> texts;
+        int cursorIndex = 0;
+    };
 
     void handleKeyEvent(fcitx::KeyEvent &keyEvent);
     void handleFocusOut(fcitx::Event &event);
@@ -101,6 +114,12 @@ private:
     void onRecordIO(fcitx::EventSourceIO *src, int fd, fcitx::IOEventFlags flags);
     void onResultIO(fcitx::EventSourceIO *src, int fd, fcitx::IOEventFlags flags);
     void onDisplayTimer(fcitx::EventSourceTime *src, uint64_t);
+
+    void handleSelectionKey(fcitx::KeyEvent &keyEvent);
+    void showCandidates();
+    void updateCandidateDisplay();
+    void commitSelected();
+    void cancelSelection();
 
     static std::string parseJsonField(const std::string &json, const std::string &key);
     static std::string escapeJson(const std::string &s);
@@ -127,4 +146,6 @@ private:
     std::unique_ptr<fcitx::EventSourceTime> displayTimer_;
     std::string pendingResult_;
     fcitx::InputContext *resultIc_ = nullptr;
+
+    CandidateSession session_;
 };

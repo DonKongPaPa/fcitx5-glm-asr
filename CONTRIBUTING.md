@@ -48,11 +48,12 @@ make clean                      # Remove build artifacts
 
 The Makefile installs:
 - Daemon binaries (`glm-asrd`, `glm-asr-overlay`) to `/usr/bin/` (requires sudo)
-- Plugin (`glm-asr.so`) to `~/.local/lib/fcitx5/` (user-level, no sudo)
-- Addon config (`glm-asr.conf`) to `~/.local/share/fcitx5/addon/` (user-level)
+- Plugin (`glm-asr.so`) to `/usr/lib/fcitx5/` (requires sudo)
+- Addon config (`glm-asr.conf`) to `/usr/share/fcitx5/addon/` (requires sudo)
 
-User-level plugin overrides the system package, so `make dev` is safe to run
-alongside a `pacman -U` installed version. Use `make uninstall-dev` to revert.
+Dev plugin overwrites the system package files, so `make dev` replaces the
+installed version. Use `make uninstall-dev` to remove, then reinstall the
+system package: `sudo pacman -S fcitx5-glm-asr`.
 
 #### Manual Build
 
@@ -169,11 +170,12 @@ kill $(pgrep -f '/usr/bin/fcitx5$')
 
 Or simply: `fcitx5 -d` (daemonize).
 
-### Stale `.so` in `~/.local/lib/fcitx5/`
+### Stale plugin after `make dev`
 
-Local user-level plugins override system-level ones. `make dev` automatically
-removes the old `.so` before installing. To revert to the system package:
+`make dev` overwrites system-level plugin files. After `make uninstall-dev`,
+reinstall the system package to restore:
 
 ```bash
 make uninstall-dev
+sudo pacman -S fcitx5-glm-asr
 ```

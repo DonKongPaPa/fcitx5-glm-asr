@@ -9,16 +9,32 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/event.h>
+#include <fcitx/candidatelist.h>
 
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <cstring>
 #include <ctime>
+#include <cstdlib>
 
 static const char *CONFIG_FILE = "conf/glm-asr.conf";
 static const uint64_t ARM_THRESHOLD_USEC = 300000;
 static const uint64_t DISPLAY_DELAY_USEC = 400000;
+
+class AsrCandidateWord : public fcitx::CandidateWord {
+public:
+    AsrCandidateWord(fcitx::Text text, int index, GlmAsrAddon *addon)
+        : CandidateWord(std::move(text)), index_(index), addon_(addon) {}
+
+    void select(fcitx::InputContext *) const override {
+        addon_->candidateSelected(index_);
+    }
+
+private:
+    int index_;
+    GlmAsrAddon *addon_;
+};
 
 GlmAsrAddon::GlmAsrAddon(fcitx::Instance *instance) : instance_(instance) {
     reloadConfig();
@@ -114,6 +130,8 @@ void GlmAsrAddon::handleFocusOut(fcitx::Event &event) {
             cleanupIO(recordIO_, recordFd_);
             state_ = State::Idle;
             currentIc_ = nullptr;
+        } else if (state_ == State::Selecting) {
+            cancelSelection();
         }
     }
 }
@@ -148,6 +166,11 @@ void GlmAsrAddon::cleanupIO(std::unique_ptr<fcitx::EventSourceIO> &io, int &fd) 
 void GlmAsrAddon::handleKeyEvent(fcitx::KeyEvent &keyEvent) {
     auto *ic = keyEvent.inputContext();
     if (!ic) return;
+
+    if (state_ == State::Selecting) {
+        handleSelectionKey(keyEvent);
+        return;
+    }
 
     if (!keyEvent.key().checkKeyList(config_.triggerKey.value())) {
         return;
@@ -334,39 +357,55 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
             std::string text = parseJsonField(line, "text");
             cleanupIO(resultIO_, resultFd_);
 
-            if (!text.empty() && resultIc_) {
-                if (config_.useOverlay.value()) {
-                    state_ = State::Idle;
-                    commitText(text);
-                    clearStatus();
-                    currentIc_ = nullptr;
-                    resultIc_ = nullptr;
-                } else {
-                    state_ = State::ResultReady;
-                    pendingResult_ = text;
-
-                    std::string display = "\xe2\x9c\x85 ";
-                    if (text.size() > 20) {
-                        display += text.substr(0, 20) + "...";
-                    } else {
-                        display += text;
-                    }
-                    showStatus(display);
-
-                    uint64_t deadline = fcitx::now(CLOCK_MONOTONIC) + DISPLAY_DELAY_USEC;
-                    displayTimer_ = instance_->eventLoop().addTimeEvent(
-                        CLOCK_MONOTONIC, deadline, 0,
-                        [this](fcitx::EventSourceTime *, uint64_t) {
-                            onDisplayTimer(nullptr, 0);
-                            return true;
-                        });
-                }
-            } else {
+            if (text.empty() || !resultIc_) {
                 clearStatus();
                 state_ = State::Idle;
                 currentIc_ = nullptr;
                 resultIc_ = nullptr;
+                return;
             }
+
+            if (config_.useOverlay.value()) {
+                state_ = State::Idle;
+                commitText(text);
+                clearStatus();
+                currentIc_ = nullptr;
+                resultIc_ = nullptr;
+                return;
+            }
+
+            const char *mockCand = getenv("GLM_ASR_MOCK");
+            if (mockCand) {
+                session_.texts = {
+                    text,
+                    text + " (variant)",
+                    text + " (corrected)"
+                };
+                session_.cursorIndex = 0;
+                state_ = State::Selecting;
+                resultIc_ = currentIc_;
+                showCandidates();
+                return;
+            }
+
+            state_ = State::ResultReady;
+            pendingResult_ = text;
+
+            std::string display = "\xe2\x9c\x85 ";
+            if (text.size() > 20) {
+                display += text.substr(0, 20) + "...";
+            } else {
+                display += text;
+            }
+            showStatus(display);
+
+            uint64_t deadline = fcitx::now(CLOCK_MONOTONIC) + DISPLAY_DELAY_USEC;
+            displayTimer_ = instance_->eventLoop().addTimeEvent(
+                CLOCK_MONOTONIC, deadline, 0,
+                [this](fcitx::EventSourceTime *, uint64_t) {
+                    onDisplayTimer(nullptr, 0);
+                    return true;
+                });
             return;
         }
         if (type == "error") {
@@ -393,6 +432,120 @@ void GlmAsrAddon::onDisplayTimer(fcitx::EventSourceTime *, uint64_t) {
     resultIc_ = nullptr;
     pendingResult_.clear();
     displayTimer_.reset();
+}
+
+void GlmAsrAddon::handleSelectionKey(fcitx::KeyEvent &keyEvent) {
+    if (keyEvent.isRelease()) return;
+
+    const auto &key = keyEvent.key();
+    int total = static_cast<int>(session_.texts.size());
+
+    if (key.check(fcitx::Key(FcitxKey_Tab)) ||
+        key.check(fcitx::Key(FcitxKey_Down))) {
+        keyEvent.filterAndAccept();
+        session_.cursorIndex = (session_.cursorIndex + 1) % total;
+        updateCandidateDisplay();
+        return;
+    }
+
+    if (key.check(fcitx::Key(FcitxKey_Tab, fcitx::KeyState::Shift)) ||
+        key.check(fcitx::Key(FcitxKey_Up))) {
+        keyEvent.filterAndAccept();
+        session_.cursorIndex = (session_.cursorIndex - 1 + total) % total;
+        updateCandidateDisplay();
+        return;
+    }
+
+    if (key.check(fcitx::Key(FcitxKey_Return)) ||
+        key.check(fcitx::Key(FcitxKey_space))) {
+        keyEvent.filterAndAccept();
+        commitSelected();
+        return;
+    }
+
+    if (key.check(fcitx::Key(FcitxKey_Escape))) {
+        keyEvent.filterAndAccept();
+        cancelSelection();
+        return;
+    }
+
+    if (key.sym() >= FcitxKey_1 && key.sym() <= FcitxKey_9) {
+        int idx = key.sym() - FcitxKey_1;
+        if (idx < total) {
+            keyEvent.filterAndAccept();
+            session_.cursorIndex = idx;
+            commitSelected();
+            return;
+        }
+    }
+}
+
+void GlmAsrAddon::showCandidates() {
+    if (!currentIc_) return;
+
+    auto &panel = currentIc_->inputPanel();
+    panel.reset();
+
+    if (config_.usePreedit.value()) {
+        panel.setPreedit(fcitx::Text(session_.texts[session_.cursorIndex]));
+    } else {
+        std::string hint = "\xf0\x9f\x8e\xa4 ";
+        hint += std::to_string(session_.texts.size());
+        hint += " \xe4\xb8\xaa\xe5\x80\x99\xe9\x80\x89";
+        panel.setAuxUp(fcitx::Text(hint));
+    }
+
+    auto candList = std::make_unique<fcitx::CommonCandidateList>();
+    candList->setPageSize(9);
+    candList->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
+    candList->setSelectionKey({fcitx::Key("1"), fcitx::Key("2"), fcitx::Key("3"),
+                               fcitx::Key("4"), fcitx::Key("5"), fcitx::Key("6"),
+                               fcitx::Key("7"), fcitx::Key("8"), fcitx::Key("9")});
+
+    int idx = 0;
+    for (const auto &text : session_.texts) {
+        candList->append(std::make_unique<AsrCandidateWord>(fcitx::Text(text), idx++, this));
+    }
+    candList->setGlobalCursorIndex(session_.cursorIndex);
+
+    panel.setCandidateList(std::move(candList));
+    currentIc_->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+
+    if (config_.usePreedit.value()) {
+        currentIc_->updatePreedit();
+    }
+}
+
+void GlmAsrAddon::updateCandidateDisplay() {
+    showCandidates();
+}
+
+void GlmAsrAddon::commitSelected() {
+    if (session_.cursorIndex < static_cast<int>(session_.texts.size()) && resultIc_) {
+        resultIc_->commitString(session_.texts[session_.cursorIndex]);
+    }
+    clearStatus();
+    state_ = State::Idle;
+    currentIc_ = nullptr;
+    resultIc_ = nullptr;
+    session_.texts.clear();
+    session_.cursorIndex = 0;
+}
+
+void GlmAsrAddon::cancelSelection() {
+    clearStatus();
+    state_ = State::Idle;
+    currentIc_ = nullptr;
+    resultIc_ = nullptr;
+    session_.texts.clear();
+    session_.cursorIndex = 0;
+}
+
+void GlmAsrAddon::candidateSelected(int index) {
+    if (state_ != State::Selecting) return;
+    if (index < 0 || index >= static_cast<int>(session_.texts.size())) return;
+    session_.cursorIndex = index;
+    commitSelected();
 }
 
 void GlmAsrAddon::showStatus(const std::string &text) {
