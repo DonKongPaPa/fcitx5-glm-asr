@@ -7,6 +7,13 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateItem {
+    pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IpcResponse {
     #[serde(rename = "type")]
     pub msg_type: String,
@@ -16,6 +23,8 @@ pub struct IpcResponse {
     pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates: Option<Vec<CandidateItem>>,
 }
 
 impl IpcResponse {
@@ -25,6 +34,7 @@ impl IpcResponse {
             recording: Some(recording),
             text: None,
             message: None,
+            candidates: None,
         }
     }
 
@@ -34,6 +44,18 @@ impl IpcResponse {
             recording: None,
             text: Some(text.to_string()),
             message: None,
+            candidates: None,
+        }
+    }
+
+    pub fn result_with_candidates(candidates: Vec<CandidateItem>) -> Self {
+        let text = candidates.first().map(|c| c.text.clone()).unwrap_or_default();
+        Self {
+            msg_type: "result".to_string(),
+            recording: None,
+            text: Some(text),
+            message: None,
+            candidates: Some(candidates),
         }
     }
 
@@ -43,6 +65,7 @@ impl IpcResponse {
             recording: None,
             text: None,
             message: Some(msg.to_string()),
+            candidates: None,
         }
     }
 }

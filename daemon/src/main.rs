@@ -6,7 +6,7 @@ mod overlay;
 mod resample;
 
 use clap::Parser;
-use ipc::{DaemonCommand, IpcResponse};
+use ipc::{CandidateItem, DaemonCommand, IpcResponse};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::{error, info, warn};
@@ -350,7 +350,21 @@ async fn main() {
                                 ov.send(overlay::OverlayCommand::Hide);
                             }
                         }
-                        let _ = reply.try_send(IpcResponse::result(mock_text));
+                        let candidates = vec![
+                            CandidateItem {
+                                text: mock_text.to_string(),
+                                source: Some("asr".to_string()),
+                            },
+                            CandidateItem {
+                                text: format!("{} (variant)", mock_text),
+                                source: Some("asr".to_string()),
+                            },
+                            CandidateItem {
+                                text: format!("{} (corrected)", mock_text),
+                                source: Some("llm_corrected".to_string()),
+                            },
+                        ];
+                        let _ = reply.try_send(IpcResponse::result_with_candidates(candidates));
                     });
                 } else {
                     let client = state.asr_client.read().await.clone();
@@ -373,7 +387,13 @@ async fn main() {
                                         ov.send(overlay::OverlayCommand::Hide);
                                     }
                                 }
-                                let _ = reply.try_send(IpcResponse::result(&text));
+                                let candidates = vec![
+                                    CandidateItem {
+                                        text: text.clone(),
+                                        source: Some("asr".to_string()),
+                                    },
+                                ];
+                                let _ = reply.try_send(IpcResponse::result_with_candidates(candidates));
                             }
                             Err(e) => {
                                 if use_overlay {

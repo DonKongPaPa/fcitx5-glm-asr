@@ -123,6 +123,7 @@ private:
 
     static std::string parseJsonField(const std::string &json, const std::string &key);
     static std::string escapeJson(const std::string &s);
+    static std::vector<std::string> parseCandidates(const std::string &json);
 
     void startRecording(fcitx::InputContext *ic);
     void stopRecording();

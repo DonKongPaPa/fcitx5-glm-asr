@@ -374,13 +374,10 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
                 return;
             }
 
-            const char *mockCand = getenv("GLM_ASR_MOCK");
-            if (mockCand) {
-                session_.texts = {
-                    text,
-                    text + " (variant)",
-                    text + " (corrected)"
-                };
+            auto candidates = parseCandidates(line);
+
+            if (candidates.size() > 1) {
+                session_.texts = std::move(candidates);
                 session_.cursorIndex = 0;
                 state_ = State::Selecting;
                 resultIc_ = currentIc_;
@@ -584,6 +581,31 @@ std::string GlmAsrAddon::parseJsonField(const std::string &json, const std::stri
         return json[pos] == 't' ? "true" : "false";
     }
     return "";
+}
+
+std::vector<std::string> GlmAsrAddon::parseCandidates(const std::string &json) {
+    std::vector<std::string> result;
+    auto key_pos = json.find("\"candidates\":");
+    if (key_pos == std::string::npos) return result;
+
+    auto arr_start = json.find('[', key_pos);
+    if (arr_start == std::string::npos) return result;
+
+    size_t pos = arr_start + 1;
+    while (pos < json.size()) {
+        auto obj_pos = json.find("\"text\":", pos);
+        if (obj_pos == std::string::npos || obj_pos > json.find(']', pos)) break;
+
+        auto quote_start = json.find('"', obj_pos + 7);
+        if (quote_start == std::string::npos) break;
+        quote_start++;
+        auto quote_end = json.find('"', quote_start);
+        if (quote_end == std::string::npos) break;
+
+        result.push_back(json.substr(quote_start, quote_end - quote_start));
+        pos = quote_end + 1;
+    }
+    return result;
 }
 
 class GlmAsrAddonFactory : public fcitx::AddonFactory {
