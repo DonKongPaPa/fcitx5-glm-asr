@@ -93,6 +93,7 @@ jobs:
           mkdir -p /tmp/deb-staging/usr/share/licenses/fcitx5-glm-asr
 
           install -Dm755 daemon/target/release/glm-asrd /tmp/deb-staging/usr/bin/glm-asrd
+          install -Dm755 daemon/target/release/glm-asr-overlay /tmp/deb-staging/usr/bin/glm-asr-overlay
           install -Dm644 data/glm-asrd.service /tmp/deb-staging/usr/lib/systemd/user/glm-asrd.service
           install -Dm755 build/plugin/glm-asr.so /tmp/deb-staging/usr/lib/x86_64-linux-gnu/fcitx5/glm-asr.so
           install -Dm644 build/plugin/glm-asr.conf /tmp/deb-staging/usr/share/fcitx5/addon/glm-asr.conf
@@ -168,6 +169,7 @@ jobs:
           mkdir -p /tmp/rpm-staging/usr/share/licenses/fcitx5-glm-asr
 
           install -Dm755 daemon/target/release/glm-asrd /tmp/rpm-staging/usr/bin/glm-asrd
+          install -Dm755 daemon/target/release/glm-asr-overlay /tmp/rpm-staging/usr/bin/glm-asr-overlay
           install -Dm644 data/glm-asrd.service /tmp/rpm-staging/usr/lib/systemd/user/glm-asrd.service
           install -Dm755 build/plugin/glm-asr.so /tmp/rpm-staging/usr/lib64/fcitx5/glm-asr.so
           install -Dm644 build/plugin/glm-asr.conf /tmp/rpm-staging/usr/share/fcitx5/addon/glm-asr.conf
@@ -226,6 +228,7 @@ jobs:
 
           mkdir -p "${STAGING}"
           install -Dm755 daemon/target/release/glm-asrd "${STAGING}/glm-asrd"
+          install -Dm755 daemon/target/release/glm-asr-overlay "${STAGING}/glm-asr-overlay"
           install -Dm755 build/plugin/glm-asr.so "${STAGING}/glm-asr.so"
           install -Dm644 build/plugin/glm-asr.conf "${STAGING}/glm-asr.conf"
           install -Dm644 data/glm-asrd.service "${STAGING}/glm-asrd.service"
@@ -245,6 +248,7 @@ jobs:
           fi
 
           install -Dm755 glm-asrd "${PREFIX}/bin/glm-asrd"
+          install -Dm755 glm-asr-overlay "${PREFIX}/bin/glm-asr-overlay"
           install -Dm755 glm-asr.so "${LIBDIR}/glm-asr.so"
           install -Dm644 glm-asr.conf "${ADDONDIR}/glm-asr.conf"
           install -Dm644 glm-asrd.service "${SYSTEMD_DIR}/glm-asrd.service"
@@ -267,6 +271,7 @@ jobs:
           fi
 
           rm -f "${PREFIX}/bin/glm-asrd"
+          rm -f "${PREFIX}/bin/glm-asr-overlay"
           rm -f "${LIBDIR}/glm-asr.so"
           rm -f "${ADDONDIR}/glm-asr.conf"
           rm -f "${SYSTEMD_DIR}/glm-asrd.service"

@@ -35,18 +35,12 @@ struct DaemonState {
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
     auto_stop_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<()>>>>,
     mock_asr: bool,
-    use_overlay: Arc<std::sync::Mutex<bool>>,
     overlay_renderer: Arc<std::sync::Mutex<String>>,
 }
 
 impl DaemonState {
-    fn should_show_overlay(&self) -> bool {
-        self.use_overlay.lock().map_or(true, |g| *g)
-            && self.overlay.lock().map_or(false, |g| g.is_some())
-    }
-
-    fn send_overlay(&self, cmd: overlay::OverlayCommand) {
-        if !self.use_overlay.lock().map_or(true, |g| *g) {
+    fn send_overlay(&self, cmd: overlay::OverlayCommand, use_overlay: bool) {
+        if !use_overlay {
             return;
         }
         let mut guard = self.overlay.lock().unwrap();
@@ -60,7 +54,7 @@ impl DaemonState {
                     overlay::OverlayRendererType::Software
                 }
             };
-            info!("overlay: thread dead, re-spawning (type={renderer_type:?})");
+            info!("overlay: process dead, re-spawning (type={renderer_type:?})");
             *guard = overlay::try_spawn_overlay(renderer_type);
         }
         if let Some(ref ov) = *guard {
@@ -75,7 +69,7 @@ impl DaemonState {
         }
         drop(guard);
 
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(100));
 
         let new_handle = overlay::try_spawn_overlay(new_type);
         let mut guard = self.overlay.lock().unwrap();
@@ -139,12 +133,7 @@ async fn main() {
     };
     info!("overlay: selected renderer = {:?}", renderer_type);
 
-    let overlay_handle = overlay::try_spawn_overlay(renderer_type);
-    if overlay_handle.is_some() {
-        info!("overlay: initialized successfully");
-    } else {
-        warn!("overlay: failed to initialize (no wlr-layer-shell support?), running without overlay");
-    }
+    let overlay_handle = None;
 
     let mock_asr = args.mock_asr || std::env::var("GLM_ASR_MOCK").is_ok();
     if mock_asr {
@@ -159,7 +148,6 @@ async fn main() {
         recording_start: Arc::new(Mutex::new(None)),
         auto_stop_tx: Arc::new(Mutex::new(None)),
         mock_asr,
-        use_overlay: Arc::new(std::sync::Mutex::new(true)),
         overlay_renderer: Arc::new(std::sync::Mutex::new(cfg.overlay_renderer.clone())),
     });
 
@@ -206,16 +194,6 @@ async fn main() {
                     &hotwords,
                 );
                 *state.asr_client.write().await = new_client;
-                if !params.use_overlay {
-                    if let Ok(guard) = state.overlay.lock() {
-                        if let Some(ref ov) = *guard {
-                            ov.send(overlay::OverlayCommand::Hide);
-                        }
-                    }
-                }
-                if let Ok(mut uo) = state.use_overlay.lock() {
-                    *uo = params.use_overlay;
-                }
                 if let Ok(mut or) = state.overlay_renderer.lock() {
                     *or = params.overlay_renderer.clone();
                 }
@@ -236,7 +214,7 @@ async fn main() {
                 let _ = reply.try_send(IpcResponse::status(false));
             }
 
-            DaemonCommand::StartRecord { reply } => {
+            DaemonCommand::StartRecord { reply, use_overlay } => {
                 let audio_guard = state.audio.lock().await;
                 if audio_guard.is_some() {
                     let _ = reply.try_send(IpcResponse::error("Already recording"));
@@ -260,17 +238,15 @@ async fn main() {
                 *state.audio.lock().await = Some(capture);
                 *state.recording_start.lock().await = Some(std::time::Instant::now());
 
-                state.send_overlay(overlay::OverlayCommand::Show);
+                state.send_overlay(overlay::OverlayCommand::Show, use_overlay);
 
                 let audio = state.audio.clone();
                 let overlay = state.overlay.clone();
                 let recording_start = state.recording_start.clone();
-                let use_overlay = state.use_overlay.clone();
                 let (auto_tx, mut auto_rx) = tokio::sync::mpsc::channel::<()>(1);
                 *state.auto_stop_tx.lock().await = Some(auto_tx.clone());
 
                 tokio::spawn(async move {
-                    let should_ov = use_overlay.lock().map_or(true, |g| *g);
                     loop {
                         tokio::select! {
                             _ = tokio::time::sleep(std::time::Duration::from_millis(FEEDBACK_INTERVAL_MS)) => {
@@ -278,7 +254,7 @@ async fn main() {
                                 if let Some(ref capture) = *audio_guard {
                                     let vol = capture.current_volume();
                                     let waveform = capture.current_waveform(32);
-                                    if should_ov {
+                                    if use_overlay {
                                         if let Some(ref ov) = *overlay.lock().unwrap() {
                                             ov.send(overlay::OverlayCommand::SetVolume(vol));
                                             ov.send(overlay::OverlayCommand::SetWaveform(waveform));
@@ -309,7 +285,7 @@ async fn main() {
                 let _ = reply.try_send(IpcResponse::status(true));
             }
 
-            DaemonCommand::StopRecord { reply } => {
+            DaemonCommand::StopRecord { reply, use_overlay } => {
                 if let Some(tx) = state.auto_stop_tx.lock().await.take() {
                     let _ = tx.send(()).await;
                 }
@@ -360,17 +336,16 @@ async fn main() {
 
                 if state.mock_asr {
                     let overlay = state.overlay.clone();
-                    let should_ov = state.should_show_overlay();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                         let mock_text = "这是一条模拟识别结果，用于调试overlay界面显示效果。";
-                        if should_ov {
+                        if use_overlay {
                             if let Some(ref ov) = *overlay.lock().unwrap() {
                                 ov.send(overlay::OverlayCommand::SetText(mock_text.to_string()));
                             }
                         }
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                        if should_ov {
+                        if use_overlay {
                             if let Some(ref ov) = *overlay.lock().unwrap() {
                                 ov.send(overlay::OverlayCommand::Hide);
                             }
@@ -380,11 +355,10 @@ async fn main() {
                 } else {
                     let client = state.asr_client.read().await.clone();
                     let overlay = state.overlay.clone();
-                    let should_ov = state.should_show_overlay();
                     tokio::spawn(async move {
                         match client.recognize(wav_data).await {
                             Ok(text) => {
-                                if should_ov {
+                                if use_overlay {
                                     if let Some(ref ov) = *overlay.lock().unwrap() {
                                         if text.is_empty() {
                                             ov.send(overlay::OverlayCommand::SetError("未识别到语音内容".to_string()));
@@ -394,7 +368,7 @@ async fn main() {
                                     }
                                 }
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                if should_ov {
+                                if use_overlay {
                                     if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::Hide);
                                     }
@@ -402,13 +376,13 @@ async fn main() {
                                 let _ = reply.try_send(IpcResponse::result(&text));
                             }
                             Err(e) => {
-                                if should_ov {
+                                if use_overlay {
                                     if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::SetError(format!("识别失败: {}", e)));
                                     }
                                 }
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                                if should_ov {
+                                if use_overlay {
                                     if let Some(ref ov) = *overlay.lock().unwrap() {
                                         ov.send(overlay::OverlayCommand::Hide);
                                     }
@@ -426,5 +400,3 @@ async fn main() {
         }
     }
 }
-
-

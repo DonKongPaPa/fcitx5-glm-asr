@@ -1,9 +1,11 @@
+pub mod protocol;
 pub mod renderer;
 mod wayland;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+pub use protocol::OverlayCommand;
 use renderer::{DrawState, OverlayRenderer};
 use smithay_client_toolkit::{
     compositor::CompositorState,
@@ -17,8 +19,10 @@ use smithay_client_toolkit::{
 use tracing::{error, info, warn};
 use wayland_client::{
     protocol::wl_output,
+    protocol::wl_region::WlRegion,
     Connection, QueueHandle,
 };
+use smithay_client_toolkit::globals::GlobalData;
 
 use wayland::ForeignToplevelState;
 
@@ -31,32 +35,133 @@ pub(crate) const CORNER_RADIUS: f32 = 14.0;
 pub(crate) const MAX_RECORD_SECS: u32 = 30;
 const FADE_DURATION: f32 = 0.3;
 
-#[derive(Debug, Clone)]
-pub enum OverlayCommand {
-    Show,
-    Hide,
-    SetVolume(f32),
-    SetWaveform(Vec<f32>),
-    SetText(String),
-    SetError(String),
-    Quit,
+#[derive(Debug, Clone, Copy)]
+pub enum OverlayRendererType {
+    Software,
+    Vello,
 }
 
 pub struct OverlayHandle {
-    tx: std::sync::mpsc::Sender<OverlayCommand>,
+    stdin: Arc<std::sync::Mutex<std::process::ChildStdin>>,
     alive: Arc<AtomicBool>,
 }
 
 impl OverlayHandle {
     pub fn send(&self, cmd: OverlayCommand) {
-        if self.alive.load(Ordering::Relaxed) {
-            let _ = self.tx.send(cmd);
+        if !self.alive.load(Ordering::Relaxed) {
+            return;
+        }
+        let json = match serde_json::to_string(&cmd) {
+            Ok(j) => j,
+            Err(e) => {
+                warn!("overlay: serialize command failed: {e}");
+                return;
+            }
+        };
+        if let Ok(mut stdin) = self.stdin.lock() {
+            use std::io::Write;
+            if let Err(e) = writeln!(stdin, "{}", json) {
+                warn!("overlay: write to child stdin failed: {e}");
+                self.alive.store(false, Ordering::Relaxed);
+            }
         }
     }
 
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::Relaxed)
     }
+}
+
+pub fn try_spawn_overlay(renderer_type: OverlayRendererType) -> Option<OverlayHandle> {
+    let self_exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("overlay: cannot determine self exe path: {e}");
+            return None;
+        }
+    };
+    let exe_dir = self_exe.parent()?;
+    let overlay_bin = exe_dir.join("glm-asr-overlay");
+
+    if !overlay_bin.exists() {
+        warn!("overlay: binary not found at {:?}", overlay_bin);
+        return None;
+    }
+
+    use std::process::{Command, Stdio};
+    let mut child = match Command::new(&overlay_bin)
+        .arg("--renderer")
+        .arg(match renderer_type {
+            OverlayRendererType::Software => "Software",
+            OverlayRendererType::Vello => "Vello",
+        })
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            warn!("overlay: failed to spawn {:?}: {e}", overlay_bin);
+            return None;
+        }
+    };
+
+    let stdin = child.stdin.take()?;
+    let alive = Arc::new(AtomicBool::new(true));
+
+    info!("overlay: spawned child process (pid={})", child.id());
+
+    let alive_clone = alive.clone();
+    std::thread::Builder::new()
+        .name("overlay-monitor".into())
+        .spawn(move || {
+            let _ = child.wait();
+            alive_clone.store(false, Ordering::Relaxed);
+            info!("overlay: child process exited");
+        })
+        .ok()?;
+
+    Some(OverlayHandle { stdin: Arc::new(std::sync::Mutex::new(stdin)), alive })
+}
+
+pub fn run_overlay_stdio(renderer_type: OverlayRendererType) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (tx, rx) = std::sync::mpsc::channel::<OverlayCommand>();
+    let alive = Arc::new(AtomicBool::new(true));
+
+    let alive_reader = alive.clone();
+    std::thread::Builder::new()
+        .name("overlay-stdin-reader".into())
+        .spawn(move || {
+            use std::io::{BufRead, BufReader};
+            let stdin = std::io::stdin();
+            let reader = BufReader::new(stdin.lock());
+            for line in reader.lines() {
+                if !alive_reader.load(Ordering::Relaxed) {
+                    break;
+                }
+                match line {
+                    Ok(l) => {
+                        let trimmed = l.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        match serde_json::from_str::<OverlayCommand>(trimmed) {
+                            Ok(cmd) => {
+                                if tx.send(cmd).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => warn!("overlay: invalid command JSON: {e}"),
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            info!("overlay: stdin reader thread exiting");
+        })?;
+
+    run_overlay(rx, alive, renderer_type)
 }
 
 pub(crate) struct OverlayState {
@@ -90,6 +195,8 @@ pub(crate) struct OverlayState {
     renderer_type: OverlayRendererType,
     layer_created: Option<std::time::Instant>,
     layer_create_retries: u32,
+    empty_region: WlRegion,
+    input_passthrough: bool,
 }
 
 impl ProvidesRegistryState for OverlayState {
@@ -100,6 +207,22 @@ impl ProvidesRegistryState for OverlayState {
 }
 
 impl OverlayState {
+    fn set_input_passthrough(&mut self, passthrough: bool) {
+        if self.input_passthrough == passthrough {
+            return;
+        }
+        self.input_passthrough = passthrough;
+        let surface = self.layer.wl_surface();
+        if passthrough {
+            surface.set_input_region(Some(&self.empty_region));
+            info!("overlay: input passthrough enabled");
+        } else {
+            surface.set_input_region(None::<&WlRegion>);
+            info!("overlay: input passthrough disabled");
+        }
+        surface.commit();
+    }
+
     fn ensure_renderer(&mut self) {
         if self.renderer.is_some() {
             return;
@@ -176,6 +299,7 @@ impl OverlayState {
         self.layer = layer;
         self.layer_output = output.cloned();
         self.configured = false;
+        self.input_passthrough = false;
         self.layer_created = Some(std::time::Instant::now());
         info!("overlay: layer surface created, waiting for configure");
     }
@@ -304,8 +428,7 @@ impl OverlayState {
                 self.fade_alpha = self.fade_target;
                 if self.fade_target < 0.5 {
                     self.visible = false;
-                    self.configured = false;
-                    self.layer_output = None;
+                    self.set_input_passthrough(true);
                     self.volume = 0.0;
                     self.countdown_start = None;
                     self.is_error = false;
@@ -359,6 +482,7 @@ impl OverlayState {
             match cmd {
                 OverlayCommand::Show => {
                     self.ensure_renderer();
+                    self.set_input_passthrough(false);
                     self.visible = true;
                     self.is_error = false;
                     self.display_text.clear();
@@ -380,6 +504,7 @@ impl OverlayState {
                     self.countdown_start = None;
                     if self.fade_alpha <= 0.0 {
                         self.visible = false;
+                        self.set_input_passthrough(true);
                         self.volume = 0.0;
                         self.is_error = false;
                         self.display_text.clear();
@@ -426,29 +551,6 @@ impl OverlayState {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum OverlayRendererType {
-    Software,
-    Vello,
-}
-
-pub fn try_spawn_overlay(renderer_type: OverlayRendererType) -> Option<OverlayHandle> {
-    let (tx, rx) = std::sync::mpsc::channel::<OverlayCommand>();
-    let alive = Arc::new(AtomicBool::new(true));
-    let alive_clone = alive.clone();
-
-    std::thread::Builder::new()
-        .name("wayland-overlay".into())
-        .spawn(move || {
-            if let Err(e) = run_overlay(rx, alive_clone, renderer_type) {
-                error!("overlay thread exited with error: {e}");
-            }
-        })
-        .ok()?;
-
-    Some(OverlayHandle { tx, alive })
-}
-
 fn run_overlay(
     cmd_rx: std::sync::mpsc::Receiver<OverlayCommand>,
     alive: Arc<AtomicBool>,
@@ -474,6 +576,10 @@ fn run_overlay(
     let layer_shell = LayerShell::bind(&globals, &qh)?;
     let ft_state = ForeignToplevelState::new(&globals, &qh);
 
+    use wayland_client::protocol::wl_compositor::WlCompositor;
+    let raw_compositor: WlCompositor = globals.bind(&qh, 1..=4, GlobalData)?;
+    let empty_region = raw_compositor.create_region(&qh, ());
+
     let surface = compositor.create_surface(&qh);
 
     let layer = layer_shell.create_layer_surface(
@@ -492,6 +598,9 @@ fn run_overlay(
     layer.set_exclusive_zone(0);
     layer.set_margin(OVERLAY_BOTTOM_MARGIN, 0, OVERLAY_BOTTOM_MARGIN, 0);
     layer.commit();
+
+    layer.wl_surface().set_input_region(Some(&empty_region));
+    layer.wl_surface().commit();
 
     info!("overlay: renderer deferred (type={renderer_type:?}), will init on first Show");
 
@@ -526,6 +635,8 @@ fn run_overlay(
         renderer_type,
         layer_created: Some(std::time::Instant::now()),
         layer_create_retries: 0,
+        empty_region,
+        input_passthrough: true,
     };
 
     info!("overlay: wayland layer-shell initialized ({OVERLAY_WIDTH}x{OVERLAY_HEIGHT}, margin bottom {OVERLAY_BOTTOM_MARGIN})");

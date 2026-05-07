@@ -13,7 +13,7 @@ use smithay_client_toolkit::reexports::protocols_wlr::foreign_toplevel::v1::clie
 };
 use wayland_client::{
     globals::GlobalList,
-    protocol::{wl_output, wl_surface::WlSurface},
+    protocol::{wl_output, wl_region::WlRegion, wl_surface::WlSurface},
     Connection, Dispatch, QueueHandle,
 };
 
@@ -273,6 +273,18 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, (), OverlayState> for OverlayState {
             zwlr_foreign_toplevel_handle_v1::Event::Parent { .. } => {}
             _ => {}
         }
+    }
+}
+
+impl Dispatch<WlRegion, ()> for OverlayState {
+    fn event(
+        _state: &mut OverlayState,
+        _proxy: &WlRegion,
+        _event: <WlRegion as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qh: &QueueHandle<OverlayState>,
+    ) {
     }
 }
 

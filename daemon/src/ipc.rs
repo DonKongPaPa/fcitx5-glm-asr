@@ -57,8 +57,8 @@ pub struct SetConfigParams {
 }
 
 pub enum DaemonCommand {
-    StartRecord { reply: mpsc::Sender<IpcResponse> },
-    StopRecord { reply: mpsc::Sender<IpcResponse> },
+    StartRecord { reply: mpsc::Sender<IpcResponse>, use_overlay: bool },
+    StopRecord { reply: mpsc::Sender<IpcResponse>, use_overlay: bool },
     Ping { reply: mpsc::Sender<IpcResponse> },
     SetConfig { params: SetConfigParams, reply: mpsc::Sender<IpcResponse> },
 }
@@ -121,10 +121,12 @@ async fn handle_client(
 
         match cmd {
             "start_record" => {
-                cmd_tx.send(DaemonCommand::StartRecord { reply: reply_tx }).await?;
+                let use_overlay = msg.get("use_overlay").and_then(|v| v.as_bool()).unwrap_or(true);
+                cmd_tx.send(DaemonCommand::StartRecord { reply: reply_tx, use_overlay }).await?;
             }
             "stop_record" => {
-                cmd_tx.send(DaemonCommand::StopRecord { reply: reply_tx }).await?;
+                let use_overlay = msg.get("use_overlay").and_then(|v| v.as_bool()).unwrap_or(true);
+                cmd_tx.send(DaemonCommand::StopRecord { reply: reply_tx, use_overlay }).await?;
             }
             "ping" => {
                 cmd_tx.send(DaemonCommand::Ping { reply: reply_tx }).await?;

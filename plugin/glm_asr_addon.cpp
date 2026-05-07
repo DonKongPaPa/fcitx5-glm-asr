@@ -213,7 +213,8 @@ void GlmAsrAddon::startRecording(fcitx::InputContext *ic) {
         return;
     }
 
-    std::string cmd = "{\"cmd\":\"start_record\"}\n";
+    std::string cmd = "{\"cmd\":\"start_record\",\"use_overlay\":"
+        + std::string(config_.useOverlay.value() ? "true" : "false") + "}\n";
     ssize_t w = write(fd, cmd.c_str(), cmd.size());
     if (w < 0 || static_cast<size_t>(w) != cmd.size()) {
         ::close(fd);
@@ -253,7 +254,8 @@ void GlmAsrAddon::stopRecording() {
         return;
     }
 
-    std::string cmd = "{\"cmd\":\"stop_record\"}\n";
+    std::string cmd = "{\"cmd\":\"stop_record\",\"use_overlay\":"
+        + std::string(config_.useOverlay.value() ? "true" : "false") + "}\n";
     ssize_t w = write(fd, cmd.c_str(), cmd.size());
     if (w < 0 || static_cast<size_t>(w) != cmd.size()) {
         ::close(fd);

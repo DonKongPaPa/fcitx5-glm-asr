@@ -1,8 +1,20 @@
 [package]
 name = "glm-asrd"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 description = "GLM ASR daemon for voice typing on Linux"
+
+[lib]
+name = "glm_asrd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "glm-asrd"
+path = "src/main.rs"
+
+[[bin]]
+name = "glm-asr-overlay"
+path = "src/bin/overlay.rs"
 
 [features]
 default = []

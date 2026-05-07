@@ -1,6 +1,6 @@
 # Maintainer: DonKongPaPa
 pkgname=fcitx5-glm-asr
-pkgver=0.2.2
+pkgver=0.3.0
 pkgrel=1
 pkgdesc="Voice typing using GLM ASR model - fcitx5 plugin with Rust daemon"
 arch=('x86_64')
@@ -37,6 +37,7 @@ package() {
     cd "$srcdir/$pkgname"
 
     install -Dm755 "daemon/target/release/glm-asrd" "$pkgdir/usr/bin/glm-asrd"
+    install -Dm755 "daemon/target/release/glm-asr-overlay" "$pkgdir/usr/bin/glm-asr-overlay"
     install -Dm644 "data/glm-asrd.service" "$pkgdir/usr/lib/systemd/user/glm-asrd.service"
     install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 
