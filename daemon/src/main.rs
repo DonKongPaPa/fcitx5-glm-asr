@@ -2,7 +2,9 @@ mod asr;
 mod audio;
 mod config;
 mod ipc;
+mod llm;
 mod overlay;
+mod prompts;
 mod resample;
 
 use clap::Parser;
@@ -30,11 +32,14 @@ struct Args {
 struct DaemonState {
     audio: Arc<Mutex<Option<audio::AudioCapture>>>,
     asr_client: RwLock<asr::AsrClient>,
+    llm_client: RwLock<llm::LlmClient>,
     config: RwLock<config::Config>,
     overlay: Arc<std::sync::Mutex<Option<overlay::OverlayHandle>>>,
     recording_start: Arc<Mutex<Option<std::time::Instant>>>,
     auto_stop_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<()>>>>,
     mock_asr: bool,
+    mock_llm: bool,
+    llm_call_count: Arc<std::sync::Mutex<usize>>,
     overlay_renderer: Arc<std::sync::Mutex<String>>,
 }
 
@@ -114,6 +119,18 @@ async fn main() {
         warn!("Config warning: {}", e);
     }
 
+    {
+        let dir = prompts::ensure_prompts_dir();
+        if let Ok(main) = prompts::load_main_prompt() {
+            info!("Loaded main prompt ({}chars)", main.len());
+        }
+        if let Ok(advices) = prompts::load_correction_advices() {
+            info!("Loaded {} correction advice(s)", advices.len());
+        }
+    }
+
+    prompts::cleanup_orphan_overlays();
+
     let socket_path = cfg.socket_path();
     if let Some(parent) = socket_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -124,6 +141,13 @@ async fn main() {
         &cfg.model,
         &cfg.api_url,
         &cfg.hotwords,
+    );
+
+    let llm_client = llm::LlmClient::new(
+        cfg.llm_api_key_resolved(),
+        &cfg.llm_model,
+        &cfg.llm_api_url,
+        cfg.llm_timeout_secs,
     );
 
     let renderer_type = if cfg.overlay_renderer.starts_with("Vello") {
@@ -139,15 +163,22 @@ async fn main() {
     if mock_asr {
         info!("mock ASR mode enabled - returning fake results");
     }
+    let mock_llm = std::env::var("GLM_LLM_MOCK").is_ok();
+    if mock_llm {
+        info!("mock LLM mode enabled - cycling through test scenarios");
+    }
 
     let state = Arc::new(DaemonState {
         audio: Arc::new(Mutex::new(None)),
         asr_client: RwLock::new(asr_client.clone()),
+        llm_client: RwLock::new(llm_client),
         config: RwLock::new(cfg.clone()),
         overlay: Arc::new(std::sync::Mutex::new(overlay_handle)),
         recording_start: Arc::new(Mutex::new(None)),
         auto_stop_tx: Arc::new(Mutex::new(None)),
         mock_asr,
+        mock_llm,
+        llm_call_count: Arc::new(std::sync::Mutex::new(0)),
         overlay_renderer: Arc::new(std::sync::Mutex::new(cfg.overlay_renderer.clone())),
     });
 
@@ -182,6 +213,16 @@ async fn main() {
                     cfg.api_url = params.api_url.clone();
                     cfg.sample_rate = params.sample_rate;
                     cfg.overlay_renderer = params.overlay_renderer.clone();
+                    cfg.enable_llm = params.enable_llm;
+                    cfg.llm_api_key = params.llm_api_key.clone();
+                    cfg.llm_api_url = params.llm_api_url.clone();
+                    cfg.llm_model = params.llm_model.clone();
+                    cfg.llm_timeout_secs = params.llm_timeout_secs;
+                    cfg.llm_thinking_mode = params.llm_thinking_mode;
+                    cfg.llm_max_tokens = params.llm_max_tokens;
+                    if params.reset_llm_prompts {
+                        cfg.reset_prompts();
+                    }
                     if let Err(e) = cfg.save() {
                         warn!("Failed to save config: {}", e);
                     }
@@ -194,6 +235,16 @@ async fn main() {
                     &hotwords,
                 );
                 *state.asr_client.write().await = new_client;
+
+                let cfg = state.config.read().await;
+                let new_llm = llm::LlmClient::new(
+                    cfg.llm_api_key_resolved(),
+                    &cfg.llm_model,
+                    &cfg.llm_api_url,
+                    cfg.llm_timeout_secs,
+                );
+                *state.llm_client.write().await = new_llm;
+
                 if let Ok(mut or) = state.overlay_renderer.lock() {
                     *or = params.overlay_renderer.clone();
                 }
@@ -210,7 +261,8 @@ async fn main() {
                     });
                 }
 
-                info!("Config updated from plugin (use_overlay={}, overlay_renderer={})", params.use_overlay, params.overlay_renderer);
+                info!("Config updated from plugin (enable_llm={}, llm_model={}, reset_prompts={})", 
+                    params.enable_llm, params.llm_model, params.reset_llm_prompts);
                 let _ = reply.try_send(IpcResponse::status(false));
             }
 
@@ -336,28 +388,72 @@ async fn main() {
 
                 if state.mock_asr {
                     let overlay = state.overlay.clone();
+                    let llm_client = state.llm_client.read().await.clone();
+                    let (enable_llm, thinking_mode, max_tokens) = {
+                        let cfg = state.config.read().await;
+                        (cfg.enable_llm, cfg.llm_thinking_mode, cfg.llm_max_tokens)
+                    };
+                    let system_prompt = match prompts::merge_system_prompt() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("Failed to load prompts: {}", e);
+                            String::new()
+                        }
+                    };
+                    let mock_llm = state.mock_llm;
+                    let llm_call_count = state.llm_call_count.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                        let mock_text = "这是一条模拟识别结果，用于调试overlay界面显示效果。";
+                        let mock_text = "这是二零二五年五月八号的模拟识别结果用于调试。";
                         if use_overlay {
                             if let Some(ref ov) = *overlay.lock().unwrap() {
                                 ov.send(overlay::OverlayCommand::SetText(mock_text.to_string()));
                             }
                         }
-                        let candidates = vec![
-                            CandidateItem {
-                                text: mock_text.to_string(),
-                                source: Some("asr".to_string()),
-                            },
-                            CandidateItem {
-                                text: format!("{} (variant)", mock_text),
-                                source: Some("asr".to_string()),
-                            },
-                            CandidateItem {
-                                text: format!("{} (corrected)", mock_text),
-                                source: Some("llm_corrected".to_string()),
-                            },
-                        ];
+
+                        let mut candidates = Vec::new();
+
+                        if enable_llm && !system_prompt.is_empty() {
+                            if use_overlay {
+                                if let Some(ref ov) = *overlay.lock().unwrap() {
+                                    ov.send(overlay::OverlayCommand::SetText("正在生成候选...".to_string()));
+                                }
+                            }
+                            let llm_result = if mock_llm {
+                                let idx = {
+                                    let mut count = llm_call_count.lock().unwrap();
+                                    let i = *count;
+                                    *count += 1;
+                                    i
+                                };
+                                let scenario = llm::MockLlmScenario::cycle(idx);
+                                info!("mock LLM scenario #{}: {}", idx, scenario.label());
+                                scenario.mock_generate(mock_text, 15).await
+                            } else {
+                                llm_client.generate_candidates(mock_text, &system_prompt, thinking_mode, max_tokens).await
+                            };
+                            match llm_result {
+                                Ok(llm_cands) => {
+                                    info!("LLM generated {} candidates", llm_cands.len());
+                                    candidates.extend(llm_cands);
+                                }
+                                Err(e) => {
+                                    warn!("LLM error: {}", e);
+                                    candidates.push(CandidateItem {
+                                        text: String::new(),
+                                        source: Some(format!("error_{}", e)),
+                                        confidence: None,
+                                    });
+                                }
+                            }
+                        }
+
+                        candidates.push(CandidateItem {
+                            text: mock_text.to_string(),
+                            source: Some("asr".to_string()),
+                            confidence: None,
+                        });
+
                         let _ = reply.try_send(IpcResponse::result_with_candidates(candidates));
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         if use_overlay {
@@ -369,6 +465,20 @@ async fn main() {
                 } else {
                     let client = state.asr_client.read().await.clone();
                     let overlay = state.overlay.clone();
+                    let llm_client = state.llm_client.read().await.clone();
+                    let (enable_llm, thinking_mode, max_tokens) = {
+                        let cfg = state.config.read().await;
+                        (cfg.enable_llm, cfg.llm_thinking_mode, cfg.llm_max_tokens)
+                    };
+                    let system_prompt = match prompts::merge_system_prompt() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!("Failed to load prompts: {}", e);
+                            String::new()
+                        }
+                    };
+                    let mock_llm = state.mock_llm;
+                    let llm_call_count = state.llm_call_count.clone();
                     tokio::spawn(async move {
                         match client.recognize(wav_data).await {
                             Ok(text) => {
@@ -381,12 +491,50 @@ async fn main() {
                                         }
                                     }
                                 }
-                                let candidates = vec![
-                                    CandidateItem {
-                                        text: text.clone(),
-                                        source: Some("asr".to_string()),
-                                    },
-                                ];
+
+                                let mut candidates = Vec::new();
+
+                                if enable_llm && !text.is_empty() && !system_prompt.is_empty() {
+                                    if use_overlay {
+                                        if let Some(ref ov) = *overlay.lock().unwrap() {
+                                            ov.send(overlay::OverlayCommand::SetText("正在生成候选...".to_string()));
+                                        }
+                                    }
+                                    let llm_result = if mock_llm {
+                                        let idx = {
+                                            let mut count = llm_call_count.lock().unwrap();
+                                            let i = *count;
+                                            *count += 1;
+                                            i
+                                        };
+                                        let scenario = llm::MockLlmScenario::cycle(idx);
+                                        info!("mock LLM scenario #{}: {}", idx, scenario.label());
+                                        scenario.mock_generate(&text, 15).await
+                                    } else {
+                                        llm_client.generate_candidates(&text, &system_prompt, thinking_mode, max_tokens).await
+                                    };
+                                    match llm_result {
+                                        Ok(llm_cands) => {
+                                            info!("LLM generated {} candidates", llm_cands.len());
+                                            candidates.extend(llm_cands);
+                                        }
+                                        Err(e) => {
+                                            warn!("LLM error: {}", e);
+                                            candidates.push(CandidateItem {
+                                                text: String::new(),
+                                                source: Some(format!("error_{}", e)),
+                                                confidence: None,
+                                            });
+                                        }
+                                    }
+                                }
+
+                                candidates.push(CandidateItem {
+                                    text: text.clone(),
+                                    source: Some("asr".to_string()),
+                                    confidence: None,
+                                });
+
                                 let _ = reply.try_send(IpcResponse::result_with_candidates(candidates));
                                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                                 if use_overlay {

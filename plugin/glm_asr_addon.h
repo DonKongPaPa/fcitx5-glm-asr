@@ -46,7 +46,7 @@ FCITX_CONFIGURATION(
     fcitx::Option<std::string> apiKey{
         this,
         "ApiKey",
-        "API Key",
+        "ASR API Key",
         std::string()};
     fcitx::Option<std::string> model{
         this,
@@ -56,7 +56,7 @@ FCITX_CONFIGURATION(
     fcitx::Option<std::string> apiUrl{
         this,
         "ApiUrl",
-        "API URL",
+        "ASR API URL",
         std::string("https://open.bigmodel.cn/api/paas/v4/audio/transcriptions")};
     fcitx::OptionWithAnnotation<SampleRate, SampleRateI18NAnnotation> sampleRate{
         this,
@@ -78,6 +78,47 @@ FCITX_CONFIGURATION(
         "OverlayRenderer",
         "Overlay Renderer",
         OverlayRenderer::Software};
+
+    fcitx::Option<bool> enableLlm{
+        this,
+        "EnableLlm",
+        "Enable LLM Post-processing (model must support JSON structured output)",
+        false};
+    fcitx::Option<std::string> llmApiKey{
+        this,
+        "LlmApiKey",
+        "LLM API Key (leave empty to use ASR API Key)",
+        std::string()};
+    fcitx::Option<std::string> llmApiUrl{
+        this,
+        "LlmApiUrl",
+        "LLM API Base URL",
+        std::string("https://open.bigmodel.cn/api/paas/v4")};
+    fcitx::Option<std::string> llmModel{
+        this,
+        "LlmModel",
+        "LLM Model Name",
+        std::string("glm-4.7-flash")};
+    fcitx::Option<int> llmTimeout{
+        this,
+        "LlmTimeout",
+        "LLM Timeout (seconds, 5-120)",
+        15};
+    fcitx::Option<bool> llmThinkingMode{
+        this,
+        "LlmThinkingMode",
+        "Enable LLM Thinking Mode (for reasoning models)",
+        false};
+    fcitx::Option<int> llmMaxTokens{
+        this,
+        "LlmMaxTokens",
+        "LLM Max Output Tokens (prevent loops, 256-8192)",
+        2048};
+    fcitx::Option<bool> resetLlmPrompts{
+        this,
+        "ResetLlmPrompts",
+        "Reset LLM Prompts to Default (\xe2\x98\x91 check and apply, auto-unchecks after reset. Edit: ~/.config/glm-asrd/prompts/)",
+        false};
 );
 
 class GlmAsrAddon : public fcitx::AddonInstance {
@@ -94,8 +135,15 @@ public:
 private:
     enum class State { Idle, Armed, Recording, Processing, ResultReady, Selecting };
 
+    struct CandidateEntry {
+        std::string text;
+        std::string source;
+        float confidence = 0.0f;
+    };
+
     struct CandidateSession {
-        std::vector<std::string> texts;
+        std::vector<CandidateEntry> entries;
+        std::string asrRawText;
         int cursorIndex = 0;
     };
 
@@ -123,7 +171,8 @@ private:
 
     static std::string parseJsonField(const std::string &json, const std::string &key);
     static std::string escapeJson(const std::string &s);
-    static std::vector<std::string> parseCandidates(const std::string &json);
+    static std::vector<CandidateEntry> parseCandidates(const std::string &json);
+    static std::string formatCandidateDisplay(const CandidateEntry &entry);
 
     void startRecording(fcitx::InputContext *ic);
     void stopRecording();

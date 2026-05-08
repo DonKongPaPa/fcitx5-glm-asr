@@ -77,6 +77,18 @@ make restart
 systemctl --user set-environment GLM_ASR_MOCK=1
 make restart
 
+# Run with mock LLM (cycles through 7 scenarios: normal, markdown-wrapped, broken-json, plain-text, empty, timeout, long-text)
+systemctl --user set-environment GLM_LLM_MOCK=1
+make restart
+
+# Run with both mocks
+systemctl --user set-environment GLM_ASR_MOCK=1 GLM_LLM_MOCK=1
+make restart
+
+# Clean up mock environment variables
+systemctl --user unset-environment GLM_ASR_MOCK GLM_LLM_MOCK
+make restart
+
 # Test IPC
 python3 -c "
 import socket, json
@@ -109,11 +121,13 @@ See [docker/README.md](docker/README.md) for details.
 ```
 daemon/          Rust daemon (glm-asrd)
   src/
-    main.rs        Entry point, overlay thread management
+    main.rs        Entry point, overlay thread management, LLM pipeline
     audio.rs       Recording (cpal/ALSA)
     asr.rs         GLM ASR API client
     ipc.rs         Unix socket IPC (newline-delimited JSON)
-    config.rs      Configuration types
+    config.rs      Configuration types (ASR + LLM settings)
+    llm.rs         LLM client (streaming SSE, repetition detection, JSON fallback)
+    prompts.rs     Prompt file system (main.md + correction_advices/*.md)
     resample.rs    Audio resampling
     overlay/       Wayland overlay (layer-shell)
       mod.rs         Lazy GPU init, Wayland reconnect

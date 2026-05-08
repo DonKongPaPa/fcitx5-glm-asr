@@ -28,6 +28,27 @@ pub struct Config {
 
     #[serde(default = "default_overlay_renderer")]
     pub overlay_renderer: String,
+
+    #[serde(default)]
+    pub enable_llm: bool,
+
+    #[serde(default = "default_llm_api_url")]
+    pub llm_api_url: String,
+
+    #[serde(default = "default_llm_model")]
+    pub llm_model: String,
+
+    #[serde(default = "default_llm_api_key")]
+    pub llm_api_key: String,
+
+    #[serde(default = "default_llm_timeout_secs")]
+    pub llm_timeout_secs: u64,
+
+    #[serde(default)]
+    pub llm_thinking_mode: bool,
+
+    #[serde(default = "default_llm_max_tokens")]
+    pub llm_max_tokens: u32,
 }
 
 fn default_api_key() -> String {
@@ -54,6 +75,26 @@ fn default_overlay_renderer() -> String {
     "Software".to_string()
 }
 
+fn default_llm_api_url() -> String {
+    "https://open.bigmodel.cn/api/paas/v4".to_string()
+}
+
+fn default_llm_model() -> String {
+    "glm-4-flash".to_string()
+}
+
+fn default_llm_api_key() -> String {
+    String::new()
+}
+
+fn default_llm_timeout_secs() -> u64 {
+    15
+}
+
+fn default_llm_max_tokens() -> u32 {
+    2048
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -65,6 +106,13 @@ impl Default for Config {
             hotword_manager_url: None,
             socket_path: default_socket_path_suffix(),
             overlay_renderer: default_overlay_renderer(),
+            enable_llm: false,
+            llm_api_url: default_llm_api_url(),
+            llm_model: default_llm_model(),
+            llm_api_key: default_llm_api_key(),
+            llm_timeout_secs: default_llm_timeout_secs(),
+            llm_thinking_mode: false,
+            llm_max_tokens: default_llm_max_tokens(),
         }
     }
 }
@@ -144,5 +192,20 @@ impl Config {
         let config_path = Self::config_dir().join("config.json");
         let json = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         fs::write(&config_path, json).map_err(|e| format!("Failed to write config: {}", e))
+    }
+
+    pub fn reset_prompts(&mut self) {
+        match crate::prompts::reset_all_prompts() {
+            Ok(_) => info!("LLM prompts reset to defaults"),
+            Err(e) => warn!("Failed to reset prompts: {}", e),
+        }
+    }
+
+    pub fn llm_api_key_resolved(&self) -> &str {
+        if self.llm_api_key.is_empty() {
+            &self.api_key
+        } else {
+            &self.llm_api_key
+        }
     }
 }

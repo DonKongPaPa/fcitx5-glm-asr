@@ -76,6 +76,10 @@ void GlmAsrAddon::setConfig(const fcitx::RawConfig &config) {
     config_.load(config, true);
     fcitx::safeSaveAsIni(config_, CONFIG_FILE);
     sendConfigToDaemon();
+    if (config_.resetLlmPrompts.value()) {
+        config_.resetLlmPrompts.setValue(false);
+        fcitx::safeSaveAsIni(config_, CONFIG_FILE);
+    }
 }
 
 std::string GlmAsrAddon::escapeJson(const std::string &s) {
@@ -107,8 +111,16 @@ bool GlmAsrAddon::sendConfigToDaemon() {
         "\"api_url\":\"" + escapeJson(config_.apiUrl.value()) + "\","
         "\"sample_rate\":" + SampleRateToString(config_.sampleRate.value()) + ","
         "\"use_overlay\":" + (config_.useOverlay.value() ? "true" : "false") + ","
-        "\"overlay_renderer\":\"" + OverlayRendererToString(config_.overlayRenderer.value()) + "\""
-    "}\n";
+        "\"overlay_renderer\":\"" + OverlayRendererToString(config_.overlayRenderer.value()) + "\","
+        "\"enable_llm\":" + (config_.enableLlm.value() ? "true" : "false") + ","
+        "\"llm_api_key\":\"" + escapeJson(config_.llmApiKey.value()) + "\","
+        "\"llm_api_url\":\"" + escapeJson(config_.llmApiUrl.value()) + "\","
+        "\"llm_model\":\"" + escapeJson(config_.llmModel.value()) + "\","
+        "\"llm_timeout_secs\":" + std::to_string(std::max(5, std::min(120, config_.llmTimeout.value()))) + ","
+        "\"llm_thinking_mode\":" + (config_.llmThinkingMode.value() ? "true" : "false") + ","
+        "\"llm_max_tokens\":" + std::to_string(std::max(256, std::min(8192, config_.llmMaxTokens.value()))) + ","
+        "\"reset_llm_prompts\":" + (config_.resetLlmPrompts.value() ? "true" : "false")
+    + "}\n";
 
     ssize_t w = write(fd, cmd.c_str(), cmd.size());
     ::close(fd);
@@ -357,18 +369,22 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
             std::string text = parseJsonField(line, "text");
             cleanupIO(resultIO_, resultFd_);
 
-            if (text.empty() || !resultIc_) {
-                clearStatus();
-                state_ = State::Idle;
-                currentIc_ = nullptr;
-                resultIc_ = nullptr;
-                return;
-            }
-
             auto candidates = parseCandidates(line);
 
+            std::string asrRaw;
+            for (const auto &c : candidates) {
+                if (c.source == "asr") {
+                    asrRaw = c.text;
+                    break;
+                }
+            }
+            if (asrRaw.empty()) {
+                asrRaw = text;
+            }
+
             if (candidates.size() > 1) {
-                session_.texts = std::move(candidates);
+                session_.entries = std::move(candidates);
+                session_.asrRawText = asrRaw;
                 session_.cursorIndex = 0;
                 state_ = State::Selecting;
                 resultIc_ = currentIc_;
@@ -376,9 +392,17 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
                 return;
             }
 
+            if (asrRaw.empty() || !resultIc_) {
+                clearStatus();
+                state_ = State::Idle;
+                currentIc_ = nullptr;
+                resultIc_ = nullptr;
+                return;
+            }
+
             if (config_.useOverlay.value()) {
                 state_ = State::Idle;
-                commitText(text);
+                commitText(asrRaw);
                 clearStatus();
                 currentIc_ = nullptr;
                 resultIc_ = nullptr;
@@ -386,13 +410,13 @@ void GlmAsrAddon::onResultIO(fcitx::EventSourceIO *, int fd, fcitx::IOEventFlags
             }
 
             state_ = State::ResultReady;
-            pendingResult_ = text;
+            pendingResult_ = asrRaw;
 
             std::string display = "\xe2\x9c\x85 ";
-            if (text.size() > 20) {
-                display += text.substr(0, 20) + "...";
+            if (asrRaw.size() > 20) {
+                display += asrRaw.substr(0, 20) + "...";
             } else {
-                display += text;
+                display += asrRaw;
             }
             showStatus(display);
 
@@ -435,7 +459,7 @@ void GlmAsrAddon::handleSelectionKey(fcitx::KeyEvent &keyEvent) {
     if (keyEvent.isRelease()) return;
 
     const auto &key = keyEvent.key();
-    int total = static_cast<int>(session_.texts.size());
+    int total = static_cast<int>(session_.entries.size());
 
     if (key.check(fcitx::Key(FcitxKey_Tab)) ||
         key.check(fcitx::Key(FcitxKey_Down))) {
@@ -483,11 +507,14 @@ void GlmAsrAddon::showCandidates() {
     auto &panel = currentIc_->inputPanel();
     panel.reset();
 
+    const auto &entry = session_.entries[session_.cursorIndex];
+    std::string preview = entry.text.empty() ? session_.asrRawText : entry.text;
+
     if (config_.usePreedit.value()) {
-        panel.setPreedit(fcitx::Text(session_.texts[session_.cursorIndex]));
+        panel.setPreedit(fcitx::Text(preview));
     } else {
         std::string hint = "\xf0\x9f\x8e\xa4 ";
-        hint += std::to_string(session_.texts.size());
+        hint += std::to_string(session_.entries.size());
         hint += " \xe4\xb8\xaa\xe5\x80\x99\xe9\x80\x89";
         panel.setAuxUp(fcitx::Text(hint));
     }
@@ -500,8 +527,9 @@ void GlmAsrAddon::showCandidates() {
                                fcitx::Key("7"), fcitx::Key("8"), fcitx::Key("9")});
 
     int idx = 0;
-    for (const auto &text : session_.texts) {
-        candList->append(std::make_unique<AsrCandidateWord>(fcitx::Text(text), idx++, this));
+    for (const auto &e : session_.entries) {
+        std::string display = formatCandidateDisplay(e);
+        candList->append(std::make_unique<AsrCandidateWord>(fcitx::Text(display), idx++, this));
     }
     candList->setGlobalCursorIndex(session_.cursorIndex);
 
@@ -518,14 +546,21 @@ void GlmAsrAddon::updateCandidateDisplay() {
 }
 
 void GlmAsrAddon::commitSelected() {
-    if (session_.cursorIndex < static_cast<int>(session_.texts.size()) && resultIc_) {
-        resultIc_->commitString(session_.texts[session_.cursorIndex]);
+    if (session_.cursorIndex < static_cast<int>(session_.entries.size()) && resultIc_) {
+        const auto &entry = session_.entries[session_.cursorIndex];
+        bool is_error = entry.source.find("error_") == 0;
+        if (is_error || entry.source == "asr") {
+            resultIc_->commitString(session_.asrRawText);
+        } else {
+            resultIc_->commitString(entry.text);
+        }
     }
     clearStatus();
     state_ = State::Idle;
     currentIc_ = nullptr;
     resultIc_ = nullptr;
-    session_.texts.clear();
+    session_.entries.clear();
+    session_.asrRawText.clear();
     session_.cursorIndex = 0;
 }
 
@@ -534,13 +569,14 @@ void GlmAsrAddon::cancelSelection() {
     state_ = State::Idle;
     currentIc_ = nullptr;
     resultIc_ = nullptr;
-    session_.texts.clear();
+    session_.entries.clear();
+    session_.asrRawText.clear();
     session_.cursorIndex = 0;
 }
 
 void GlmAsrAddon::candidateSelected(int index) {
     if (state_ != State::Selecting) return;
-    if (index < 0 || index >= static_cast<int>(session_.texts.size())) return;
+    if (index < 0 || index >= static_cast<int>(session_.entries.size())) return;
     session_.cursorIndex = index;
     commitSelected();
 }
@@ -583,8 +619,23 @@ std::string GlmAsrAddon::parseJsonField(const std::string &json, const std::stri
     return "";
 }
 
-std::vector<std::string> GlmAsrAddon::parseCandidates(const std::string &json) {
-    std::vector<std::string> result;
+std::string GlmAsrAddon::formatCandidateDisplay(const CandidateEntry &entry) {
+    if (entry.source == "asr") {
+        return "[\xe5\x8e\x9f\xe5\xa7\x8b] " + entry.text;
+    }
+    if (entry.source.find("error_") == 0) {
+        std::string label = entry.source.substr(6);
+        return "[\xe2\x9d\x8c " + label + "]";
+    }
+    if (entry.source.find("llm_") == 0) {
+        std::string label = entry.source.substr(4);
+        return "[\xe2\x9c\x85 " + label + "] " + entry.text;
+    }
+    return entry.text;
+}
+
+std::vector<GlmAsrAddon::CandidateEntry> GlmAsrAddon::parseCandidates(const std::string &json) {
+    std::vector<CandidateEntry> result;
     auto key_pos = json.find("\"candidates\":");
     if (key_pos == std::string::npos) return result;
 
@@ -593,8 +644,9 @@ std::vector<std::string> GlmAsrAddon::parseCandidates(const std::string &json) {
 
     size_t pos = arr_start + 1;
     while (pos < json.size()) {
+        auto obj_end = json.find(']', pos);
         auto obj_pos = json.find("\"text\":", pos);
-        if (obj_pos == std::string::npos || obj_pos > json.find(']', pos)) break;
+        if (obj_pos == std::string::npos || (obj_end != std::string::npos && obj_pos > obj_end)) break;
 
         auto quote_start = json.find('"', obj_pos + 7);
         if (quote_start == std::string::npos) break;
@@ -602,7 +654,36 @@ std::vector<std::string> GlmAsrAddon::parseCandidates(const std::string &json) {
         auto quote_end = json.find('"', quote_start);
         if (quote_end == std::string::npos) break;
 
-        result.push_back(json.substr(quote_start, quote_end - quote_start));
+        std::string text = json.substr(quote_start, quote_end - quote_start);
+        std::string source;
+
+        auto src_pos = json.find("\"source\":", quote_end);
+        auto next_obj = json.find("\"text\":", quote_end);
+        if (src_pos != std::string::npos && (next_obj == std::string::npos || src_pos < next_obj)) {
+            auto src_quote = json.find('"', src_pos + 9);
+            if (src_quote != std::string::npos) {
+                src_quote++;
+                auto src_end = json.find('"', src_quote);
+                if (src_end != std::string::npos) {
+                    source = json.substr(src_quote, src_end - src_quote);
+                }
+            }
+        }
+
+        float conf = 0.0f;
+        auto conf_pos = json.find("\"confidence\":", quote_end);
+        if (conf_pos != std::string::npos && (next_obj == std::string::npos || conf_pos < next_obj)) {
+            auto val_start = conf_pos + 13;
+            while (val_start < json.size() && json[val_start] == ' ') val_start++;
+            auto val_end = json.find_first_of(",}", val_start);
+            if (val_end != std::string::npos) {
+                try {
+                    conf = std::stof(json.substr(val_start, val_end - val_start));
+                } catch (...) {}
+            }
+        }
+
+        result.push_back({text, source, conf});
         pos = quote_end + 1;
     }
     return result;

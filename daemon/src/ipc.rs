@@ -11,6 +11,8 @@ pub struct CandidateItem {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +79,14 @@ pub struct SetConfigParams {
     pub sample_rate: u32,
     pub use_overlay: bool,
     pub overlay_renderer: String,
+    pub enable_llm: bool,
+    pub llm_api_key: String,
+    pub llm_api_url: String,
+    pub llm_model: String,
+    pub llm_timeout_secs: u64,
+    pub llm_thinking_mode: bool,
+    pub llm_max_tokens: u32,
+    pub reset_llm_prompts: bool,
 }
 
 pub enum DaemonCommand {
@@ -164,6 +174,15 @@ async fn handle_client(
                     sample_rate: msg.get("sample_rate").and_then(|v| v.as_u64()).unwrap_or(16000) as u32,
                     use_overlay: msg.get("use_overlay").and_then(|v| v.as_bool()).unwrap_or(true),
                     overlay_renderer: msg.get("overlay_renderer").and_then(|v| v.as_str()).unwrap_or("Software").to_string(),
+                    enable_llm: msg.get("enable_llm").and_then(|v| v.as_bool()).unwrap_or(false),
+                    llm_api_key: msg.get("llm_api_key").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                    llm_api_url: msg.get("llm_api_url").and_then(|v| v.as_str())
+                        .unwrap_or("https://open.bigmodel.cn/api/paas/v4").to_string(),
+                    llm_model: msg.get("llm_model").and_then(|v| v.as_str()).unwrap_or("glm-4-flash").to_string(),
+                    llm_timeout_secs: msg.get("llm_timeout_secs").and_then(|v| v.as_u64()).unwrap_or(15),
+                    llm_thinking_mode: msg.get("llm_thinking_mode").and_then(|v| v.as_bool()).unwrap_or(false),
+                    llm_max_tokens: msg.get("llm_max_tokens").and_then(|v| v.as_u64()).unwrap_or(2048) as u32,
+                    reset_llm_prompts: msg.get("reset_llm_prompts").and_then(|v| v.as_bool()).unwrap_or(false),
                 };
                 cmd_tx.send(DaemonCommand::SetConfig { params, reply: reply_tx }).await?;
             }
